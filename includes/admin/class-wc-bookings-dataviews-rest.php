@@ -338,34 +338,137 @@ class WC_Bookings_DataViews_REST {
 		$meta_query = array(); // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
 
 		// Handle search. The default WP 's' parameter searches only
-		// post_title/post_content, which is useless for bookings (titles
-		// are generic, content is empty). Instead:
-		//   - numeric query  → match booking ID
-		//   - text query     → match customer login / email / display name
-		// If a non-numeric search matches no users, force an empty result
-		// rather than returning everything.
+		// post_title/post_content, which is useless for bookings.
+		// Instead, collect candidate booking IDs from every searchable
+		// surface (customer, product, resource, order number, booking
+		// number) and constrain the query with post__in.
 		if ( '' !== $search ) {
-			if ( ctype_digit( $search ) ) {
-				$args['p'] = (int) $search;
-			} else {
-				$user_ids = get_users(
-					array(
-						'search'         => '*' . esc_attr( $search ) . '*',
-						'search_columns' => array( 'user_login', 'user_email', 'display_name', 'user_nicename' ),
-						'fields'         => 'ID',
-					)
-				);
+			$matched_ids = array();
+			$is_numeric  = ctype_digit( $search );
 
-				if ( ! empty( $user_ids ) ) {
-					$meta_query[] = array(
-						'key'     => '_booking_customer_id',
-						'value'   => $user_ids,
-						'compare' => 'IN',
-					);
-				} else {
-					$args['post__in'] = array( 0 );
+			// Booking ID match.
+			if ( $is_numeric ) {
+				$candidate = get_post( (int) $search );
+				if ( $candidate && 'wc_booking' === $candidate->post_type ) {
+					$matched_ids[] = (int) $search;
 				}
 			}
+
+			// Customer match (login / email / display name / nicename).
+			$user_ids = get_users(
+				array(
+					'search'         => '*' . esc_attr( $search ) . '*',
+					'search_columns' => array( 'user_login', 'user_email', 'display_name', 'user_nicename' ),
+					'fields'         => 'ID',
+				)
+			);
+			if ( ! empty( $user_ids ) ) {
+				$matched_ids = array_merge(
+					$matched_ids,
+					get_posts(
+						array(
+							'post_type'      => 'wc_booking',
+							'post_status'    => 'any',
+							'posts_per_page' => -1,
+							'fields'         => 'ids',
+							// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+							'meta_query'     => array(
+								array(
+									'key'     => '_booking_customer_id',
+									'value'   => $user_ids,
+									'compare' => 'IN',
+								),
+							),
+						)
+					)
+				);
+			}
+
+			// Product name match.
+			$product_ids = get_posts(
+				array(
+					'post_type'      => 'product',
+					'post_status'    => 'any',
+					'posts_per_page' => -1,
+					'fields'         => 'ids',
+					's'              => $search,
+				)
+			);
+			if ( ! empty( $product_ids ) ) {
+				$matched_ids = array_merge(
+					$matched_ids,
+					get_posts(
+						array(
+							'post_type'      => 'wc_booking',
+							'post_status'    => 'any',
+							'posts_per_page' => -1,
+							'fields'         => 'ids',
+							// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+							'meta_query'     => array(
+								array(
+									'key'     => '_booking_product_id',
+									'value'   => $product_ids,
+									'compare' => 'IN',
+								),
+							),
+						)
+					)
+				);
+			}
+
+			// Resource name match (bookable_resource is the WC Bookings CPT).
+			$resource_ids = get_posts(
+				array(
+					'post_type'      => 'bookable_resource',
+					'post_status'    => 'any',
+					'posts_per_page' => -1,
+					'fields'         => 'ids',
+					's'              => $search,
+				)
+			);
+			if ( ! empty( $resource_ids ) ) {
+				$matched_ids = array_merge(
+					$matched_ids,
+					get_posts(
+						array(
+							'post_type'      => 'wc_booking',
+							'post_status'    => 'any',
+							'posts_per_page' => -1,
+							'fields'         => 'ids',
+							// phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+							'meta_query'     => array(
+								array(
+									'key'     => '_booking_resource_id',
+									'value'   => $resource_ids,
+									'compare' => 'IN',
+								),
+							),
+						)
+					)
+				);
+			}
+
+			// Order number match (numeric only — parent order ID).
+			if ( $is_numeric ) {
+				$matched_ids = array_merge(
+					$matched_ids,
+					get_posts(
+						array(
+							'post_type'      => 'wc_booking',
+							'post_status'    => 'any',
+							'posts_per_page' => -1,
+							'fields'         => 'ids',
+							'post_parent'    => (int) $search,
+						)
+					)
+				);
+			}
+
+			$matched_ids = array_values( array_unique( array_map( 'intval', $matched_ids ) ) );
+
+			// post__in with an empty array would behave as "no filter",
+			// so use [0] when nothing matched, which is a guaranteed miss.
+			$args['post__in'] = empty( $matched_ids ) ? array( 0 ) : $matched_ids;
 		}
 
 		if ( $product ) {
