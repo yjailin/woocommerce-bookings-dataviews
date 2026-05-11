@@ -93,6 +93,10 @@ class WC_Bookings_DataViews_REST {
 						'default'           => '',
 						'sanitize_callback' => 'sanitize_key',
 					),
+					'attendance'  => array(
+						'default'           => '',
+						'sanitize_callback' => 'sanitize_key',
+					),
 				),
 			)
 		);
@@ -327,6 +331,7 @@ class WC_Bookings_DataViews_REST {
 		$start_range = (string) $request['start_range'];
 		$end_range   = (string) $request['end_range'];
 		$tab         = (string) $request['tab'];
+		$attendance  = (string) $request['attendance'];
 
 		$args = array(
 			'post_type'      => 'wc_booking',
@@ -482,6 +487,45 @@ class WC_Bookings_DataViews_REST {
 			$meta_query[] = array(
 				'key'   => '_booking_resource_id',
 				'value' => $resource,
+			);
+		}
+
+		// Attendance filter. The UI shows past bookings as "Attended"
+		// unless explicitly flagged unattended, so the filter mirrors
+		// that visual rule rather than just doing a literal meta match.
+		if ( 'attended' === $attendance ) {
+			$now_ymd = ( new DateTimeImmutable( 'now', wp_timezone() ) )->format( 'YmdHis' );
+			$meta_query[] = array(
+				'relation' => 'OR',
+				array(
+					'key'   => '_booking_attendance_status',
+					'value' => 'attended',
+				),
+				array(
+					'relation' => 'AND',
+					array(
+						'key'     => '_booking_end',
+						'value'   => $now_ymd,
+						'compare' => '<',
+					),
+					array(
+						'relation' => 'OR',
+						array(
+							'key'     => '_booking_attendance_status',
+							'compare' => 'NOT EXISTS',
+						),
+						array(
+							'key'     => '_booking_attendance_status',
+							'value'   => 'unattended',
+							'compare' => '!=',
+						),
+					),
+				),
+			);
+		} elseif ( 'unattended' === $attendance ) {
+			$meta_query[] = array(
+				'key'   => '_booking_attendance_status',
+				'value' => 'unattended',
 			);
 		}
 

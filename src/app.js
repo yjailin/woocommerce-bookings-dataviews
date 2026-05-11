@@ -95,6 +95,8 @@ function buildParams( view, tab ) {
 	if ( startRange ) params.start_range = startRange;
 	const endRange = firstFilterValue( view.filters, 'end_date' );
 	if ( endRange ) params.end_range = endRange;
+	const attendance = firstFilterValue( view.filters, 'attendance_status' );
+	if ( attendance ) params.attendance = attendance;
 	if ( tab ) params.tab = tab;
 	return params;
 }
