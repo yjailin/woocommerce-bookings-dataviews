@@ -1,0 +1,185 @@
+/* Force a white background on this page only. */
+html,
+body.wp-admin {
+	background: #fff;
+}
+
+/* Bundle DataViews' own stylesheet — the `wp-dataviews` WP style
+   handle does not exist in this WP build, so we ship it ourselves. */
+@import "@wordpress/dataviews/build-style/style.css";
+
+/* Hide the classic month + product dropdowns + Filter submit button. */
+#posts-filter .tablenav .alignleft.actions:not(.bulkactions) {
+	display: none;
+}
+
+/* Hide the whole legacy tablenav rows (top and bottom). */
+#posts-filter .tablenav.top,
+#posts-filter .tablenav.bottom {
+	display: none;
+}
+
+.woocommerce-layout__header {
+	border-bottom: 1px solid #c3c4c7;
+}
+
+#screen-options-link-wrap,
+#contextual-help-link-wrap {
+	position: relative;
+}
+#screen-options-link-wrap::before,
+#contextual-help-link-wrap::before {
+	content: "";
+	position: absolute;
+	top: -2px;
+	left: 0;
+	right: 0;
+	height: 3px;
+	background: #fff;
+	z-index: 1;
+	pointer-events: none;
+}
+
+#wc-bookings-dv-root {
+	--dv-inset: 16px;
+
+	.dataviews__view-actions,
+	.dataviews-footer {
+		padding-left: var( --dv-inset );
+		padding-right: var( --dv-inset );
+	}
+
+	.dataviews-filters__container {
+		padding-left: var( --dv-inset );
+		padding-right: var( --dv-inset );
+		padding-top: 8px;
+	}
+
+	.dataviews-view-table tr td:first-child,
+	.dataviews-view-table tr th:first-child {
+		padding-left: var( --dv-inset );
+	}
+
+	.dataviews-view-table tr td:last-child,
+	.dataviews-view-table tr th:last-child {
+		padding-right: var( --dv-inset );
+	}
+
+	.dataviews-view-table__actions-column--sticky {
+		position: static;
+	}
+	.dataviews-view-table__actions-column--stuck::after {
+		display: none;
+	}
+
+	.dataviews-view-table {
+		width: 100%;
+		table-layout: fixed;
+	}
+
+	.dataviews-view-table col.dataviews-view-table__col-checkbox { width: 40px; }
+	.dataviews-view-table col.dataviews-view-table__col-first-data { width: 90px; }
+	.dataviews-view-table col.dataviews-view-table__col-start_date { width: 190px; }
+	.dataviews-view-table col.dataviews-view-table__col-product { width: 180px; }
+	.dataviews-view-table col.dataviews-view-table__col-resource { width: 130px; }
+	.dataviews-view-table col.dataviews-view-table__col-num_of_persons { width: 70px; }
+	.dataviews-view-table col.dataviews-view-table__col-customer { width: 130px; }
+	.dataviews-view-table col.dataviews-view-table__col-booking_status { width: 110px; }
+	.dataviews-view-table col.dataviews-view-table__col-attendance_status { width: 110px; }
+	.dataviews-view-table col.dataviews-view-table__col-status { width: 100px; }
+	.dataviews-view-table col.dataviews-view-table__col-total { width: 90px; }
+	.dataviews-view-table col.dataviews-view-table__col-actions { width: 110px; }
+
+	.dataviews-view-table col.dataviews-view-table__col-expand {
+		width: 1%;
+	}
+
+	.dataviews-view-table col.dataviews-view-table__col-first-data {
+		width: 90px;
+	}
+	.dataviews-view-table thead th:nth-child(2),
+	.dataviews-view-table tbody td:nth-child(2) {
+		width: 90px;
+		max-width: 90px;
+	}
+
+	.dataviews-view-table__cell-content-wrapper,
+	.dataviews-view-table__primary-column-content {
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.dataviews-view-grid {
+		padding-left: var( --dv-inset );
+		padding-right: var( --dv-inset );
+	}
+}
+
+#wc-bookings-dv-root .dataviews__view-actions {
+	justify-content: flex-start;
+	border-bottom: 1px solid #dcdcde;
+	align-items: center;
+	position: relative;
+	padding-top: 8px;
+	padding-bottom: 8px;
+	--dv-toolbar-pad-b: 8px;
+}
+
+#wc-bookings-dv-root .wc-bookings-dv-tabs {
+	order: -1;
+	align-self: stretch;
+	display: flex;
+	align-items: flex-end;
+	margin-bottom: calc( -1 * var( --dv-toolbar-pad-b, 8px ) );
+}
+
+#wc-bookings-dv-root .dataviews__search {
+	margin-left: auto;
+}
+
+body.wc_booking_page_wc-bookings-dataviews .wrap {
+	padding-left: 0;
+	padding-right: 0;
+}
+
+#wc-bookings-dv-header {
+	padding-left: 24px;
+	padding-right: 24px;
+	padding-bottom: 8px;
+}
+
+body.wc_booking_page_wc-bookings-dataviews .wrap > .wp-header-end {
+	margin: 0;
+	border: 0;
+	height: 0;
+}
+
+/* Hide Screen Options / Help. Use the page-specific body class
+   (added by add_submenu_page) so the rule matches whether the page
+   is reached via edit.php?post_type=wc_booking&page=... or via the
+   admin.php?page=... fallback URL that WordPress generates for the
+   parent menu link. The original `body.post-type-wc_booking` selector
+   only matched the edit.php form. */
+body.wc_booking_page_wc-bookings-dataviews #screen-meta-links {
+	display: none;
+}
+
+body.post-type-wc_booking .woocommerce-layout__header,
+body.wc_booking_page_wc-bookings-dataviews .woocommerce-layout__header {
+	display: none;
+}
+
+body.wc_booking_page_wc-bookings-dataviews #wpbody {
+	margin-top: 0;
+}
+
+.wrap > .notice,
+.wrap > div.updated,
+.wrap > div.error,
+#message {
+	display: none !important;
+}
+
+#wc-bookings-dv-root {
+	margin-top: 0;
+}

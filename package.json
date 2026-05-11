@@ -1,0 +1,30 @@
+{
+  "name": "woocommerce-bookings-dataviews",
+  "description": "DataViews-powered All Bookings admin screen for WooCommerce Bookings.",
+  "license": "GPL-2.0-or-later",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "wp-scripts build",
+    "start": "wp-scripts start",
+    "plugin-zip": "wp-scripts plugin-zip"
+  },
+  "files": [
+    "woocommerce-bookings-dataviews.php",
+    "includes/",
+    "build/",
+    "README.md"
+  ],
+  "devDependencies": {
+    "@wordpress/scripts": "^30.24.0"
+  },
+  "dependencies": {
+    "@wordpress/admin-ui": "^1.12.0",
+    "@wordpress/dataviews": "^14.2.0",
+    "@wordpress/ui": "^0.12.0"
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  }
+}
