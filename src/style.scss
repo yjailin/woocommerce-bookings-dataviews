@@ -72,18 +72,27 @@ body.wp-admin {
 		display: none;
 	}
 
+	// Let the table grow past the container width when many optional
+	// columns are toggled on. Without this, table-layout:fixed forces
+	// every column to share width: 100%, which squishes columns that
+	// don't have an explicit width down to a few pixels (e.g. End Date,
+	// Order). The view-actions/footer panels are already scoped so the
+	// horizontal scrollbar appears only on the data table area.
 	.dataviews-view-table {
-		width: 100%;
+		min-width: 100%;
+		width: auto;
 		table-layout: fixed;
 	}
 
 	.dataviews-view-table col.dataviews-view-table__col-checkbox { width: 40px; }
 	.dataviews-view-table col.dataviews-view-table__col-first-data { width: 90px; }
 	.dataviews-view-table col.dataviews-view-table__col-start_date { width: 190px; }
+	.dataviews-view-table col.dataviews-view-table__col-end_date { width: 190px; }
 	.dataviews-view-table col.dataviews-view-table__col-product { width: 180px; }
 	.dataviews-view-table col.dataviews-view-table__col-resource { width: 130px; }
 	.dataviews-view-table col.dataviews-view-table__col-num_of_persons { width: 70px; }
 	.dataviews-view-table col.dataviews-view-table__col-customer { width: 130px; }
+	.dataviews-view-table col.dataviews-view-table__col-order { width: 100px; }
 	.dataviews-view-table col.dataviews-view-table__col-booking_status { width: 110px; }
 	.dataviews-view-table col.dataviews-view-table__col-attendance_status { width: 110px; }
 	.dataviews-view-table col.dataviews-view-table__col-status { width: 100px; }
