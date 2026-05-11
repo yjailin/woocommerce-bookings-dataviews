@@ -333,10 +333,40 @@ class WC_Bookings_DataViews_REST {
 			'post_status'    => $status ? array( $status ) : 'any',
 			'posts_per_page' => $per_page,
 			'paged'          => $page,
-			's'              => $search,
 		);
 
 		$meta_query = array(); // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+
+		// Handle search. The default WP 's' parameter searches only
+		// post_title/post_content, which is useless for bookings (titles
+		// are generic, content is empty). Instead:
+		//   - numeric query  → match booking ID
+		//   - text query     → match customer login / email / display name
+		// If a non-numeric search matches no users, force an empty result
+		// rather than returning everything.
+		if ( '' !== $search ) {
+			if ( ctype_digit( $search ) ) {
+				$args['p'] = (int) $search;
+			} else {
+				$user_ids = get_users(
+					array(
+						'search'         => '*' . esc_attr( $search ) . '*',
+						'search_columns' => array( 'user_login', 'user_email', 'display_name', 'user_nicename' ),
+						'fields'         => 'ID',
+					)
+				);
+
+				if ( ! empty( $user_ids ) ) {
+					$meta_query[] = array(
+						'key'     => '_booking_customer_id',
+						'value'   => $user_ids,
+						'compare' => 'IN',
+					);
+				} else {
+					$args['post__in'] = array( 0 );
+				}
+			}
+		}
 
 		if ( $product ) {
 			$meta_query[] = array(
