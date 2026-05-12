@@ -270,7 +270,7 @@ export default function App() {
 				isLoading={ isLoading }
 				getItemId={ ( item ) => String( item.id ) }
 				renderItemLink={ ( { item, ...props } ) => (
-					<Link href={ item.edit_url } { ...props } />
+					<Link href={ item.detail_url || item.edit_url } { ...props } />
 				) }
 				search
 			/>

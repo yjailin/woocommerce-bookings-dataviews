@@ -29,8 +29,26 @@ class WC_Bookings_DataViews_Page {
 
 	/**
 	 * Render the page.
+	 *
+	 * Two shells share the same admin slug:
+	 *   - List: edit.php?post_type=wc_booking&page=wc-bookings-dataviews
+	 *   - Detail: same URL + &booking=<id>
 	 */
 	public static function render() {
+		$booking_id = isset( $_GET['booking'] ) ? absint( wp_unslash( $_GET['booking'] ) ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+		if ( $booking_id ) {
+			self::render_detail( $booking_id );
+			return;
+		}
+
+		self::render_list();
+	}
+
+	/**
+	 * Render the list shell (the original render() body).
+	 */
+	private static function render_list() {
 		require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php';
 		require_once ABSPATH . 'wp-admin/includes/class-wp-posts-list-table.php';
 		require_once ABSPATH . 'wp-admin/includes/list-table.php';
@@ -78,6 +96,20 @@ class WC_Bookings_DataViews_Page {
 	}
 
 	/**
+	 * Render the booking detail shell. The React app reads the booking ID
+	 * from the URL and fetches the rest via REST.
+	 *
+	 * @param int $booking_id Booking ID to display.
+	 */
+	private static function render_detail( $booking_id ) {
+		?>
+		<div class="wrap wc-bookings-dv-detail-wrap">
+			<div id="wc-bookings-dv-detail-root" data-booking-id="<?php echo esc_attr( (string) $booking_id ); ?>"></div>
+		</div>
+		<?php
+	}
+
+	/**
 	 * Enqueue scripts and styles for the DataViews bookings page.
 	 *
 	 * @param string $hook Current admin page hook.
@@ -118,6 +150,8 @@ class WC_Bookings_DataViews_Page {
 				'editUrl'    => admin_url( 'post.php?action=edit&post=' ),
 				'newUrl'     => admin_url( 'edit.php?post_type=wc_booking&page=create_booking' ),
 				'currentUrl' => admin_url( 'edit.php?post_type=wc_booking' ),
+				'listUrl'    => admin_url( 'edit.php?post_type=wc_booking&page=' . self::PAGE_SLUG ),
+				'detailUrl'  => admin_url( 'edit.php?post_type=wc_booking&page=' . self::PAGE_SLUG . '&booking=' ),
 			)
 		);
 	}

@@ -17,10 +17,14 @@ if ( class_exists( 'WC_Bookings_DataViews_REST' ) ) {
  * REST endpoint for the DataViews bookings screen.
  *
  * GET  /wc-bookings/v1/dataviews/bookings
+ * GET  /wc-bookings/v1/dataviews/bookings/(?P<id>\d+)
  * GET  /wc-bookings/v1/dataviews/statuses
  * GET  /wc-bookings/v1/dataviews/filter-options
  * POST /wc-bookings/v1/dataviews/bookings/confirm
  * POST /wc-bookings/v1/dataviews/bookings/cancel
+ * POST /wc-bookings/v1/dataviews/bookings/mark-paid
+ * POST /wc-bookings/v1/dataviews/bookings/mark-attended
+ * POST /wc-bookings/v1/dataviews/bookings/mark-unattended
  */
 class WC_Bookings_DataViews_REST {
 
@@ -154,6 +158,234 @@ class WC_Bookings_DataViews_REST {
 				),
 			)
 		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/dataviews/bookings/mark-paid',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => $capability_check,
+				'callback'            => array( $this, 'mark_paid_bookings' ),
+				'args'                => array(
+					'ids' => array(
+						'required' => true,
+						'type'     => 'array',
+						'items'    => array( 'type' => 'integer' ),
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/dataviews/bookings/mark-attended',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => $capability_check,
+				'callback'            => array( $this, 'mark_attended_bookings' ),
+				'args'                => array(
+					'ids' => array(
+						'required' => true,
+						'type'     => 'array',
+						'items'    => array( 'type' => 'integer' ),
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/dataviews/bookings/mark-unattended',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => $capability_check,
+				'callback'            => array( $this, 'mark_unattended_bookings' ),
+				'args'                => array(
+					'ids' => array(
+						'required' => true,
+						'type'     => 'array',
+						'items'    => array( 'type' => 'integer' ),
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/dataviews/bookings/(?P<id>\d+)',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => $capability_check,
+				'callback'            => array( $this, 'get_booking' ),
+				'args'                => array(
+					'id' => array(
+						'required'          => true,
+						'sanitize_callback' => 'absint',
+					),
+				),
+			)
+		);
+	}
+
+	/**
+	 * Mark bookings as paid.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response
+	 */
+	public function mark_paid_bookings( WP_REST_Request $request ) {
+		$ids     = array_map( 'absint', array_filter( (array) $request['ids'] ) );
+		$updated = array();
+		foreach ( $ids as $id ) {
+			try {
+				$booking = new WC_Booking( $id );
+			} catch ( Exception $e ) {
+				continue;
+			}
+			if ( in_array( $booking->get_status(), array( 'paid', 'complete', 'cancelled', 'refunded' ), true ) ) {
+				continue;
+			}
+			$booking->update_status( 'paid' );
+			$updated[] = $id;
+		}
+		return rest_ensure_response( array( 'updated' => $updated ) );
+	}
+
+	/**
+	 * Mark bookings as attended.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response
+	 */
+	public function mark_attended_bookings( WP_REST_Request $request ) {
+		$ids     = array_map( 'absint', array_filter( (array) $request['ids'] ) );
+		$updated = array();
+		foreach ( $ids as $id ) {
+			if ( 'wc_booking' !== get_post_type( $id ) ) {
+				continue;
+			}
+			update_post_meta( $id, '_booking_attendance_status', 'attended' );
+			$updated[] = $id;
+		}
+		return rest_ensure_response( array( 'updated' => $updated ) );
+	}
+
+	/**
+	 * Mark bookings as unattended.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response
+	 */
+	public function mark_unattended_bookings( WP_REST_Request $request ) {
+		$ids     = array_map( 'absint', array_filter( (array) $request['ids'] ) );
+		$updated = array();
+		foreach ( $ids as $id ) {
+			if ( 'wc_booking' !== get_post_type( $id ) ) {
+				continue;
+			}
+			update_post_meta( $id, '_booking_attendance_status', 'unattended' );
+			$updated[] = $id;
+		}
+		return rest_ensure_response( array( 'updated' => $updated ) );
+	}
+
+	/**
+	 * Get a single booking with full detail.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function get_booking( WP_REST_Request $request ) {
+		$id = (int) $request['id'];
+		if ( 'wc_booking' !== get_post_type( $id ) ) {
+			return new WP_Error( 'wc_bookings_dv_not_found', __( 'Booking not found.', 'woocommerce-bookings' ), array( 'status' => 404 ) );
+		}
+		try {
+			$booking = new WC_Booking( $id );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'wc_bookings_dv_not_found', __( 'Booking not found.', 'woocommerce-bookings' ), array( 'status' => 404 ) );
+		}
+		$post = get_post( $id );
+		return rest_ensure_response( $this->shape_booking_detail( $booking, $post ) );
+	}
+
+	/**
+	 * Shape a booking into a detailed payload for the single view.
+	 *
+	 * Builds on top of the list shape with extra fields the detail page needs.
+	 *
+	 * @param WC_Booking $booking Booking object.
+	 * @param WP_Post    $post    Post object.
+	 * @return array
+	 */
+	private function shape_booking_detail( WC_Booking $booking, WP_Post $post ) {
+		$base = $this->shape_booking( $booking, $post );
+
+		// Date helpers. We give the client both component-formatted strings
+		// (so it can compose "Date · Start time - End time" without parsing
+		// the locale-formatted full strings) and an is_same_day flag.
+		$tz        = wp_timezone();
+		$start_raw = (string) get_post_meta( $post->ID, '_booking_start', true );
+		$end_raw   = (string) get_post_meta( $post->ID, '_booking_end', true );
+		$start_dt  = $start_raw ? DateTimeImmutable::createFromFormat( 'YmdHis', $start_raw, $tz ) : false;
+		$end_dt    = $end_raw ? DateTimeImmutable::createFromFormat( 'YmdHis', $end_raw, $tz ) : false;
+
+		$date_format = (string) get_option( 'date_format' );
+		$time_format = (string) get_option( 'time_format' );
+
+		$base['start_date_only_display'] = $start_dt ? wp_date( $date_format, $start_dt->getTimestamp() ) : '';
+		$base['start_time_display']      = $start_dt ? wp_date( $time_format, $start_dt->getTimestamp() ) : '';
+		$base['end_time_display']        = $end_dt ? wp_date( $time_format, $end_dt->getTimestamp() ) : '';
+		$base['is_same_day']             = ( $start_dt && $end_dt && $start_dt->format( 'Y-m-d' ) === $end_dt->format( 'Y-m-d' ) );
+
+		// Duration for the ServiceInfo row.
+		$duration_seconds         = ( $start_dt && $end_dt ) ? ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) : 0;
+		$base['duration_seconds'] = $duration_seconds;
+		$base['duration_display'] = self::format_duration_human( $duration_seconds );
+
+		// Product thumbnail — extends the list shape's `product` block.
+		$product = $booking->get_product();
+		if ( $product && isset( $base['product'] ) && is_array( $base['product'] ) ) {
+			$product_id                   = is_callable( array( $product, 'get_id' ) ) ? $product->get_id() : 0;
+			$thumbnail_id                 = $product_id ? get_post_thumbnail_id( $product_id ) : 0;
+			$thumbnail                    = $thumbnail_id ? wp_get_attachment_image_src( $thumbnail_id, 'thumbnail' ) : null;
+			$base['product']['thumbnail'] = $thumbnail ? $thumbnail[0] : '';
+		}
+
+		// Customer phone / extra details.
+		$customer = $booking->get_customer();
+		if ( isset( $base['customer'] ) && is_array( $base['customer'] ) ) {
+			$base['customer']['phone']   = isset( $customer->phone ) ? $customer->phone : '';
+			$base['customer']['user_id'] = isset( $customer->user_id ) ? (int) $customer->user_id : 0;
+		}
+
+		// Booking flags / extras.
+		$base['all_day']  = (bool) get_post_meta( $post->ID, '_booking_all_day', true );
+		$base['note']     = (string) $post->post_excerpt;
+		$base['date_created'] = mysql_to_rfc3339( $post->post_date_gmt );
+
+		// Order / payment.
+		$order_id = (int) get_post_meta( $post->ID, '_booking_order_item_id', true );
+		$order    = $booking->get_order();
+		if ( $order ) {
+			$base['order']['status']       = $order->get_status();
+			$base['order']['status_label'] = wc_get_order_status_name( $order->get_status() );
+			$base['order']['date_paid']    = $order->get_date_paid() ? $order->get_date_paid()->date( DATE_ATOM ) : null;
+			$base['order']['total']        = (float) $order->get_total();
+			$base['order']['total_display'] = html_entity_decode( wp_strip_all_tags( wc_price( (float) $order->get_total() ) ), ENT_QUOTES, 'UTF-8' );
+			$base['order']['currency']     = $order->get_currency();
+		}
+
+		// Capability flags that drive button visibility on the client.
+		$base['can'] = array(
+			'cancel'           => ! in_array( $booking->get_status(), array( 'cancelled', 'complete' ), true ),
+			'mark_paid'        => ! in_array( $booking->get_status(), array( 'paid', 'complete', 'cancelled', 'refunded' ), true ),
+			'mark_attended'    => ! empty( $base['is_past'] ) && 'attended' !== $base['attendance_status'],
+			'mark_unattended'  => ! empty( $base['is_past'] ) && 'unattended' !== $base['attendance_status'],
+			'view_order'       => ! empty( $base['order'] ),
+		);
+
+		return $base;
 	}
 
 	/**
@@ -202,6 +434,33 @@ class WC_Bookings_DataViews_REST {
 			$updated[] = $id;
 		}
 		return rest_ensure_response( array( 'updated' => $updated ) );
+	}
+
+	/**
+	 * Format a duration in seconds as a short human-readable string —
+	 * "1 hour 30 minutes", "45 minutes", etc. Used by the booking detail
+	 * page's ServiceInfo row.
+	 *
+	 * @param int $seconds Duration in seconds.
+	 * @return string
+	 */
+	private static function format_duration_human( $seconds ) {
+		$seconds = (int) $seconds;
+		if ( $seconds <= 0 ) {
+			return '';
+		}
+		$hours   = (int) floor( $seconds / 3600 );
+		$minutes = (int) floor( ( $seconds % 3600 ) / 60 );
+		$parts   = array();
+		if ( $hours > 0 ) {
+			/* translators: %d: number of hours */
+			$parts[] = sprintf( _n( '%d hour', '%d hours', $hours, 'woocommerce-bookings' ), $hours );
+		}
+		if ( $minutes > 0 ) {
+			/* translators: %d: number of minutes */
+			$parts[] = sprintf( _n( '%d minute', '%d minutes', $minutes, 'woocommerce-bookings' ), $minutes );
+		}
+		return implode( ' ', $parts );
 	}
 
 	/**
@@ -691,6 +950,7 @@ class WC_Bookings_DataViews_REST {
 		return array(
 			'id'                      => $post->ID,
 			'edit_url'                => admin_url( 'post.php?post=' . $post->ID . '&action=edit' ),
+			'detail_url'              => admin_url( 'edit.php?post_type=wc_booking&page=' . WC_Bookings_DataViews_Page::PAGE_SLUG . '&booking=' . $post->ID ),
 			'total'                   => $cost,
 			'total_display'           => html_entity_decode( wp_strip_all_tags( wc_price( $cost ) ), ENT_QUOTES, 'UTF-8' ),
 			'is_past'                 => ( '' !== $end && $end < $now ),

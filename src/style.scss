@@ -4,9 +4,13 @@ body.wp-admin {
 	background: #fff;
 }
 
-/* Bundle DataViews' own stylesheet — the `wp-dataviews` WP style
-   handle does not exist in this WP build, so we ship it ourselves. */
+/* Bundle the design-system stylesheets we depend on. The corresponding
+   `wp-*` style handles either don't exist in this WP build (dataviews,
+   admin-ui) or rely on design-token CSS variables we need locally. Mirrors
+   the import order from WooCommerce's experimental-products-app. */
+@import "@wordpress/theme/src/prebuilt/css/design-tokens.css";
 @import "@wordpress/dataviews/build-style/style.css";
+@import "@wordpress/admin-ui/build-style/style.css";
 
 /* Hide the classic month + product dropdowns + Filter submit button. */
 #posts-filter .tablenav .alignleft.actions:not(.bulkactions) {
@@ -152,9 +156,19 @@ body.wc_booking_page_wc-bookings-dataviews .wrap {
 }
 
 #wc-bookings-dv-header {
-	padding-left: 24px;
-	padding-right: 24px;
+	padding-left: 0;
+	padding-right: 0;
 	padding-bottom: 8px;
+
+	// Align the title/subtitle/actions with the DataViews toolbar and
+	// table cells (16px inset from the container edge). Without this
+	// override, .admin-ui-page__header inherits 24px horizontal padding
+	// from the WPDS design token, pushing the header 8px further in
+	// than the table content.
+	.admin-ui-page__header {
+		padding-left: 16px;
+		padding-right: 16px;
+	}
 }
 
 body.wc_booking_page_wc-bookings-dataviews .wrap > .wp-header-end {
@@ -191,4 +205,131 @@ body.wc_booking_page_wc-bookings-dataviews #wpbody {
 
 #wc-bookings-dv-root {
 	margin-top: 0;
+}
+
+/* --- Booking detail page ------------------------------------------------ */
+
+.wc-bookings-dv-detail-wrap {
+	padding-left: 0;
+	padding-right: 0;
+}
+
+.wc-bookings-dv-detail--loading {
+	display: flex;
+	justify-content: center;
+	padding: 48px 0;
+}
+
+.wc-bookings-dv-detail__breadcrumbs ol {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 13px;
+	color: #50575e;
+}
+
+.wc-bookings-dv-detail__breadcrumbs li + li::before {
+	content: "/";
+	margin-right: 8px;
+	color: #a7aaad;
+}
+
+.wc-bookings-dv-detail__breadcrumbs li[aria-current="page"] {
+	color: #1d2327;
+}
+
+/* DataForm cards bring their own chrome via @wordpress/dataviews styles.
+   We just provide the outer wrapper padding. */
+.wc-bookings-dv-detail__body {
+	padding: 16px 24px 32px;
+	max-width: 1280px;
+}
+
+/* Soften DataForm's default field labels — by default the dataviews
+   stylesheet renders them ALL-CAPS with letter-spacing, which reads as
+   shouty inside a card-layout detail page. Scoped to our detail wrap so
+   it doesn't bleed into the list view's column headers. */
+.wc-bookings-dv-detail {
+	.dataforms-layouts-panel__field-label,
+	.dataforms-layouts-regular__field-label {
+		text-transform: none;
+		letter-spacing: normal;
+	}
+}
+
+/* ServiceInfoRender — product thumbnail + name + duration. */
+.wc-bookings-dv-detail__service-info-image {
+	width: 32px;
+	height: 32px;
+	object-fit: cover;
+	border-radius: 2px;
+	background: #f0f0f0;
+	flex-shrink: 0;
+}
+
+.wc-bookings-dv-detail__service-info-placeholder {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border-radius: 2px;
+	background: #f0f0f0;
+	color: #757575;
+	flex-shrink: 0;
+
+	svg {
+		width: 20px;
+		height: 20px;
+	}
+}
+
+/* BookingPaymentBreakdown — line items + total. */
+.wc-bookings-dv-detail__payment-breakdown {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.wc-bookings-dv-detail__payment-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 16px;
+	font-size: 13px;
+}
+
+.wc-bookings-dv-detail__payment-row--total {
+	padding-top: 8px;
+	border-top: 1px solid #dcdcde;
+	font-weight: 600;
+}
+
+/* BookingCustomerDetails — vertical stack of name/email/phone. */
+.wc-bookings-dv-detail__customer-details {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 13px;
+}
+
+.wc-bookings-dv-detail__customer-details-row {
+	line-height: 1.5;
+}
+
+/* NoteRender. */
+.wc-bookings-dv-detail__note {
+	margin: 0;
+	white-space: pre-wrap;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.wc-bookings-dv-detail__note-empty {
+	color: #757575;
+	font-style: italic;
+	font-size: 13px;
 }
