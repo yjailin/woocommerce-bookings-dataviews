@@ -48,13 +48,15 @@ import {
 } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 import { __, sprintf } from '@wordpress/i18n';
-import {
-	Spinner,
-	Notice,
-	Button as ComponentsButton,
-} from '@wordpress/components';
-import { Page } from '@wordpress/admin-ui';
+import { Spinner, Notice } from '@wordpress/components';
+import { Page, Breadcrumbs } from '@wordpress/admin-ui';
 import { Badge, Button, Stack } from '@wordpress/ui';
+import {
+	createMemoryHistory,
+	createRootRoute,
+	createRouter,
+	RouterProvider,
+} from '@tanstack/react-router';
 import { DataForm } from '@wordpress/dataviews';
 import { useDispatch } from '@wordpress/data';
 import { store as noticesStore } from '@wordpress/notices';
@@ -87,10 +89,6 @@ const PAYMENT_BADGE = {
 	refunded: { intent: 'none', label: __( 'Refunded', 'woocommerce-bookings' ) },
 };
 
-// Match CIAB's stage.tsx badges block exactly: two slots. The first is
-// "Canceled" when cancelled, otherwise the attendance field's own render
-// (which may itself be a Badge or a "—" span). The second is the payment
-// status with a "—" fallback (mirrors CIAB's <PaymentStatusBadge fallback="—" />).
 const ATTENDANCE_FIELD = buildFields().find(
 	( f ) => f.id === 'attendance_status'
 );
@@ -98,6 +96,16 @@ const ATTENDANCE_FIELD = buildFields().find(
 function HeaderBadges( { booking } ) {
 	const isCancelled = booking.status === 'cancelled';
 	const pBadge = PAYMENT_BADGE[ booking.status ];
+
+	// Only render the attendance field when it will produce a real Badge.
+	// The field's own `render` falls back to a "—" span when the booking
+	// has no recorded attendance and isn't in the past — we don't want
+	// that placeholder in the header.
+	const hasAttendance =
+		booking.attendance_status === 'attended' ||
+		booking.attendance_status === 'unattended' ||
+		booking.is_past;
+
 	return (
 		<>
 			{ isCancelled ? (
@@ -105,6 +113,7 @@ function HeaderBadges( { booking } ) {
 					{ __( 'Canceled', 'woocommerce-bookings' ) }
 				</Badge>
 			) : (
+				hasAttendance &&
 				ATTENDANCE_FIELD?.render && (
 					<ATTENDANCE_FIELD.render
 						item={ booking }
@@ -112,35 +121,52 @@ function HeaderBadges( { booking } ) {
 					/>
 				)
 			) }
-			{ pBadge ? (
+			{ pBadge && (
 				<Badge intent={ pBadge.intent }>{ pBadge.label }</Badge>
-			) : (
-				<span>—</span>
 			) }
 		</>
 	);
 }
 
-function Breadcrumbs( { bookingId } ) {
+// @wordpress/admin-ui's <Breadcrumbs> uses <Link> from @wordpress/route, which
+// re-exports from @tanstack/react-router. Link requires a router context. This
+// WP admin page is not a TanStack-routed app, so we provide a minimal in-memory
+// router whose only purpose is to satisfy that context dependency. The router
+// detects absolute URLs (LIST_URL) as external and renders them as plain <a>
+// elements, so navigation still happens via full page loads.
+//
+// The router renders its routeTree's root component. We use a context-bridge
+// pattern so the root component pulls its content from React context — that
+// way the booking detail content lives inside the RouterProvider subtree (and
+// can therefore use Link) while still receiving props from the outer caller.
+const RouterContentContext = createContext( null );
+function RouterContentBridge() {
+	return useContext( RouterContentContext );
+}
+function createDetailRouter() {
+	return createRouter( {
+		routeTree: createRootRoute( { component: RouterContentBridge } ),
+		history: createMemoryHistory( { initialEntries: [ '/' ] } ),
+		defaultNotFoundComponent: () => null,
+	} );
+}
+
+function BookingBreadcrumbs( { bookingId } ) {
 	return (
-		<nav
-			className="wc-bookings-dv-detail__breadcrumbs"
-			aria-label={ __( 'Breadcrumbs', 'woocommerce-bookings' ) }
-		>
-			<ol>
-				<li>
-					<a href={ LIST_URL }>
-						{ __( 'All Bookings', 'woocommerce-bookings' ) }
-					</a>
-				</li>
-				<li aria-current="page">
-					{ sprintf(
+		<Breadcrumbs
+			items={ [
+				{
+					label: __( 'All Bookings', 'woocommerce-bookings' ),
+					to: LIST_URL,
+				},
+				{
+					label: sprintf(
 						__( 'Booking #%d', 'woocommerce-bookings' ),
 						bookingId
-					) }
-				</li>
-			</ol>
-		</nav>
+					),
+				},
+			] }
+		/>
 	);
 }
 
@@ -738,34 +764,32 @@ function PageHeaderActions( { booking } ) {
 	if ( ! can.cancel ) return null;
 
 	return (
-		<Stack direction="row" gap="sm">
-			<ComponentsButton
-				variant="secondary"
-				isDestructive
-				isBusy={ pending === 'cancel' }
-				disabled={ pending !== null }
-				onClick={ () => {
-					// eslint-disable-next-line no-alert -- intentional confirm for destructive action.
-					if (
-						! window.confirm(
-							__(
-								'Cancel this booking? This cannot be undone.',
-								'woocommerce-bookings'
-							)
+		<Button
+			size="compact"
+			variant="outline"
+			loading={ pending === 'cancel' }
+			disabled={ pending !== null }
+			onClick={ () => {
+				// eslint-disable-next-line no-alert -- intentional confirm for destructive action.
+				if (
+					! window.confirm(
+						__(
+							'Cancel this booking? This cannot be undone.',
+							'woocommerce-bookings'
 						)
-					) {
-						return;
-					}
-					run( {
-						id: 'cancel',
-						endpoint: 'bookings/cancel',
-						redirectTo: LIST_URL,
-					} );
-				} }
-			>
-				{ __( 'Cancel booking', 'woocommerce-bookings' ) }
-			</ComponentsButton>
-		</Stack>
+					)
+				) {
+					return;
+				}
+				run( {
+					id: 'cancel',
+					endpoint: 'bookings/cancel',
+					redirectTo: LIST_URL,
+				} );
+			} }
+		>
+			{ __( 'Cancel booking', 'woocommerce-bookings' ) }
+		</Button>
 	);
 }
 
@@ -775,6 +799,7 @@ function PageHeaderActions( { booking } ) {
 
 export default function BookingDetail( { bookingId } ) {
 	const [ refreshToken, setRefreshToken ] = useState( 0 );
+	const [ detailRouter ] = useState( createDetailRouter );
 	const { booking, isLoading, error } = useBookingDetail(
 		bookingId,
 		refreshToken
@@ -819,23 +844,19 @@ export default function BookingDetail( { bookingId } ) {
 
 	if ( ! booking ) return null;
 
-	return (
+	const content = (
 		<BookingDetailContext.Provider value={ contextValue }>
-			<div className="wc-bookings-dv-detail">
-				<Page
-					title={ sprintf(
-						__( 'Booking #%d', 'woocommerce-bookings' ),
-						booking.id
-					) }
-					subTitle={ getSubtitle( booking ) }
-					headingLevel={ 1 }
-					showSidebarToggle={ false }
-					breadcrumbs={ <Breadcrumbs bookingId={ booking.id } /> }
-					badges={ <HeaderBadges booking={ booking } /> }
-					actions={ <PageHeaderActions booking={ booking } /> }
-				/>
-
-				<div className="wc-bookings-dv-detail__body">
+			<Page
+				subTitle={ getSubtitle( booking ) }
+				showSidebarToggle={ false }
+				hasPadding
+				breadcrumbs={
+					<BookingBreadcrumbs bookingId={ booking.id } />
+				}
+				badges={ <HeaderBadges booking={ booking } /> }
+				actions={ <PageHeaderActions booking={ booking } /> }
+			>
+				<div className="wc-bookings-dv-detail">
 					<DataForm
 						data={ booking }
 						fields={ formFields }
@@ -843,7 +864,13 @@ export default function BookingDetail( { bookingId } ) {
 						onChange={ () => {} }
 					/>
 				</div>
-			</div>
+			</Page>
 		</BookingDetailContext.Provider>
+	);
+
+	return (
+		<RouterContentContext.Provider value={ content }>
+			<RouterProvider router={ detailRouter } />
+		</RouterContentContext.Provider>
 	);
 }

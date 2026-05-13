@@ -71,8 +71,8 @@ class WC_Bookings_DataViews_Page {
 		);
 		$list_table->prepare_items();
 		?>
+		<div id="wc-bookings-dv-header"></div>
 		<div class="wrap">
-			<div id="wc-bookings-dv-header"></div>
 			<hr class="wp-header-end" />
 
 			<form id="posts-filter" method="get">
@@ -99,13 +99,18 @@ class WC_Bookings_DataViews_Page {
 	 * Render the booking detail shell. The React app reads the booking ID
 	 * from the URL and fetches the rest via REST.
 	 *
+	 * Deliberately rendered OUTSIDE `<div class="wrap">`: the admin-ui
+	 * `<Page>` component is the top-level page container, and WP admin's
+	 * `.wrap h1`, `.wrap a`, `.wrap p` rules bleed into the design system
+	 * styles when nested inside `.wrap` (heading padding, link color,
+	 * etc.). Mounting at the wpbody-content level keeps the design system
+	 * intact.
+	 *
 	 * @param int $booking_id Booking ID to display.
 	 */
 	private static function render_detail( $booking_id ) {
 		?>
-		<div class="wrap wc-bookings-dv-detail-wrap">
-			<div id="wc-bookings-dv-detail-root" data-booking-id="<?php echo esc_attr( (string) $booking_id ); ?>"></div>
-		</div>
+		<div id="wc-bookings-dv-detail-root" data-booking-id="<?php echo esc_attr( (string) $booking_id ); ?>"></div>
 		<?php
 	}
 

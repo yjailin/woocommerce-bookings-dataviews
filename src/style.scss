@@ -7,10 +7,11 @@ body.wp-admin {
 /* Bundle the design-system stylesheets we depend on. The corresponding
    `wp-*` style handles either don't exist in this WP build (dataviews,
    admin-ui) or rely on design-token CSS variables we need locally. Mirrors
-   the import order from WooCommerce's experimental-products-app. */
+   the import order from WooCommerce's experimental-products-app.
+   admin-ui 2.x ships CSS modules that auto-inject when components are
+   imported, so no stylesheet import is needed for it. */
 @import "@wordpress/theme/src/prebuilt/css/design-tokens.css";
 @import "@wordpress/dataviews/build-style/style.css";
-@import "@wordpress/admin-ui/build-style/style.css";
 
 /* Hide the classic month + product dropdowns + Filter submit button. */
 #posts-filter .tablenav .alignleft.actions:not(.bulkactions) {
@@ -45,28 +46,11 @@ body.wp-admin {
 }
 
 #wc-bookings-dv-root {
-	--dv-inset: 16px;
-
-	.dataviews__view-actions,
-	.dataviews-footer {
-		padding-left: var( --dv-inset );
-		padding-right: var( --dv-inset );
-	}
-
 	.dataviews-filters__container {
-		padding-left: var( --dv-inset );
-		padding-right: var( --dv-inset );
+		/* Split DataViews' native 16px bottom padding evenly so the chip
+		   sits visually centered without changing the row's total height. */
 		padding-top: 8px;
-	}
-
-	.dataviews-view-table tr td:first-child,
-	.dataviews-view-table tr th:first-child {
-		padding-left: var( --dv-inset );
-	}
-
-	.dataviews-view-table tr td:last-child,
-	.dataviews-view-table tr th:last-child {
-		padding-right: var( --dv-inset );
+		padding-bottom: 8px;
 	}
 
 	.dataviews-view-table__actions-column--sticky {
@@ -122,10 +106,6 @@ body.wp-admin {
 		max-width: 100%;
 	}
 
-	.dataviews-view-grid {
-		padding-left: var( --dv-inset );
-		padding-right: var( --dv-inset );
-	}
 }
 
 #wc-bookings-dv-root .dataviews__view-actions {
@@ -134,16 +114,60 @@ body.wp-admin {
 	align-items: center;
 	position: relative;
 	padding-top: 8px;
-	padding-bottom: 8px;
-	--dv-toolbar-pad-b: 8px;
+	padding-bottom: 10px;
 }
+
+/* The unnamed wrapper WC admin renders between our header mount and the
+   .wrap takes up 10px of vertical space (it hosts the WC notice list,
+   which we don't surface on this page anyway). Hide it so the toolbar
+   sits flush under the admin-ui Page header. */
+#wc-bookings-dv-header + div {
+	display: none;
+}
+
+/* Hide the admin-ui Page header's bottom border — the toolbar below has
+   its own border-bottom, so the design system's would just be a second
+   parallel line. */
+#wc-bookings-dv-header header {
+	border-block-end: 0;
+}
+
 
 #wc-bookings-dv-root .wc-bookings-dv-tabs {
 	order: -1;
 	align-self: stretch;
 	display: flex;
-	align-items: flex-end;
-	margin-bottom: calc( -1 * var( --dv-toolbar-pad-b, 8px ) );
+	align-items: stretch;
+	/* Extend through the toolbar's padding-bottom so the stretched tab
+	   buttons reach the toolbar's bottom border. The label stays centered
+	   in the full-height button, so the indicator (at button bottom) sits
+	   on the border. */
+	margin-bottom: -10px;
+}
+
+/* Make the active tab indicator span only the label width (not the full
+   clickable tab box), AND make the tab buttons fill the toolbar height
+   so the indicator — which is anchored to each tab's bottom edge — sits
+   directly on the toolbar's bottom border. The default `@wordpress/ui`
+   Tabs CSS pins tab buttons to 48px tall, which would force the toolbar
+   to ~65px and leave a gap below the indicator; overriding height to
+   `auto` + stretching lets the search field's ~32px drive the toolbar
+   height instead. */
+#wc-bookings-dv-root .wc-bookings-dv-tabs [role="tab"] {
+	padding-left: 0;
+	padding-right: 0;
+	/* Match the toolbar's padding-bottom so the centered label sits in
+	   the upper portion of the stretched button — aligning with the
+	   search/filter/view group at the top — while the button's bbox
+	   still extends to the toolbar's bottom border where the indicator
+	   sits. */
+	padding-bottom: 10px;
+	height: auto;
+	align-self: stretch;
+}
+#wc-bookings-dv-root .wc-bookings-dv-tabs [role="tablist"] {
+	column-gap: 16px;
+	align-items: stretch;
 }
 
 #wc-bookings-dv-root .dataviews__search {
@@ -153,22 +177,6 @@ body.wp-admin {
 body.wc_booking_page_wc-bookings-dataviews .wrap {
 	padding-left: 0;
 	padding-right: 0;
-}
-
-#wc-bookings-dv-header {
-	padding-left: 0;
-	padding-right: 0;
-	padding-bottom: 8px;
-
-	// Align the title/subtitle/actions with the DataViews toolbar and
-	// table cells (16px inset from the container edge). Without this
-	// override, .admin-ui-page__header inherits 24px horizontal padding
-	// from the WPDS design token, pushing the header 8px further in
-	// than the table content.
-	.admin-ui-page__header {
-		padding-left: 16px;
-		padding-right: 16px;
-	}
 }
 
 body.wc_booking_page_wc-bookings-dataviews .wrap > .wp-header-end {
@@ -209,43 +217,27 @@ body.wc_booking_page_wc-bookings-dataviews #wpbody {
 
 /* --- Booking detail page ------------------------------------------------ */
 
-.wc-bookings-dv-detail-wrap {
-	padding-left: 0;
-	padding-right: 0;
+/* Neutralize two WP-admin global rules that bleed into the design-system
+   subtree and break the header layout. Both come from wp-admin's
+   `common.css`; Storybook doesn't have them, which is why the same
+   `<Page>`/`<Breadcrumbs>` render correctly there.
+   • `body.wp-admin { line-height: 1.4em }` inflates the inherited
+     line-height to 18.2px on elements that don't set their own.
+   • `li, dd { margin: 0 0 6px 0 }` adds 6px of margin-bottom to every
+     `<li>`, which inflates the breadcrumb `<ul>` height and shifts the
+     link/h1 away from the badges' vertical center. */
+#wc-bookings-dv-detail-root {
+	line-height: normal;
+
+	li {
+		margin: 0;
+	}
 }
 
 .wc-bookings-dv-detail--loading {
 	display: flex;
 	justify-content: center;
 	padding: 48px 0;
-}
-
-.wc-bookings-dv-detail__breadcrumbs ol {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 4px 8px;
-	margin: 0;
-	padding: 0;
-	list-style: none;
-	font-size: 13px;
-	color: #50575e;
-}
-
-.wc-bookings-dv-detail__breadcrumbs li + li::before {
-	content: "/";
-	margin-right: 8px;
-	color: #a7aaad;
-}
-
-.wc-bookings-dv-detail__breadcrumbs li[aria-current="page"] {
-	color: #1d2327;
-}
-
-/* DataForm cards bring their own chrome via @wordpress/dataviews styles.
-   We just provide the outer wrapper padding. */
-.wc-bookings-dv-detail__body {
-	padding: 16px 24px 32px;
-	max-width: 1280px;
 }
 
 /* Soften DataForm's default field labels — by default the dataviews
