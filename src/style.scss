@@ -13,6 +13,17 @@ body.wp-admin {
 @import "@wordpress/theme/src/prebuilt/css/design-tokens.css";
 @import "@wordpress/dataviews/build-style/style.css";
 
+/* @wordpress/ui's dialog / popover / alert-dialog CSS pulls z-index from
+   `--wp-ui-dialog-z-index` / `--wp-ui-popover-z-index` and falls back to
+   `initial` (auto) when unset. In WP admin context that places them
+   underneath admin-ui's <Page> region (z-index: 1), which makes the
+   AlertDialog popup invisible to clicks even while the backdrop dims
+   the page. Lift both above the admin chrome. */
+:root {
+	--wp-ui-dialog-z-index: 100000;
+	--wp-ui-popover-z-index: 100000;
+}
+
 /* Hide the classic month + product dropdowns + Filter submit button. */
 #posts-filter .tablenav .alignleft.actions:not(.bulkactions) {
 	display: none;
@@ -204,6 +215,70 @@ body.wc_booking_page_wc-bookings-dataviews #wpbody {
 	margin-top: 0;
 }
 
+/* The admin-menu pointer triangle that marks the active item defaults to
+   `#f0f0f0` (the standard WP admin content background). We force the
+   page body white, so the triangle no longer blends in. Match it back
+   to the body color. */
+body.wc_booking_page_wc-bookings-dataviews {
+	#adminmenu li.current a.menu-top::after,
+	#adminmenu li.wp-has-current-submenu a.menu-top::after,
+	#adminmenu .wp-menu-arrow,
+	#adminmenu .wp-menu-arrow div {
+		border-right-color: #fff;
+	}
+}
+
+/* The DataForm panel-layout summary cell (the text next to the pencil
+   icon — e.g. the customer email value) inherits the heading text
+   variant's medium (499) weight, which reads as bold next to the rest
+   of the body copy. CIAB renders these at regular body weight. */
+.dataforms-layouts-panel__field-trigger
+	.dataforms-layouts-panel__field-control {
+	font-weight: var(--wpds-typography-font-weight-regular, 400);
+}
+
+/* The billing-information summary stacks the contact block on three
+   lines (name / address / phone) so it looks like a postal address
+   block. The default panel-summary cell inherits a 24px line-height
+   from the body-md text variant, which made the three lines feel
+   double-spaced; tighten to 20px (CIAB's address block reads tight,
+   not paragraph-spaced). */
+.wc-bookings-dv-detail__billing-summary {
+	display: flex;
+	flex-direction: column;
+	line-height: var(--wpds-typography-line-height-sm, 20px);
+}
+
+/* Mirrors `@automattic/design-system`'s
+   `<InputLayout.Slot padding="minimal">` wrapper used by CIAB's
+   AddressAutocompleteField. Values lifted from the live CIAB DOM:
+   8px of left padding, neutral foreground color (#1e1e1e, not the
+   weak variant), flex-centered. The Icon SVG's fill is forced to
+   `currentColor` because `@wordpress/icons` sets a literal fill on
+   the path geometry that wouldn't otherwise inherit the wrapper
+   color. */
+/* `@wordpress/components`'s `InputControl` renders the prefix slot as
+   `display: block`, which leaves our wrapper top-aligned inside the
+   surrounding flex container instead of vertically centered with the
+   input baseline. Stretch the slot to the container's full height
+   (which is already flex-centered) and our wrapper's `align-items:
+   center` finishes the job. */
+.components-input-control__prefix:has(> .wc-bookings-dv-detail__field-prefix) {
+	display: flex;
+	align-self: stretch;
+}
+
+.wc-bookings-dv-detail__field-prefix {
+	display: inline-flex;
+	align-items: center;
+	padding-left: var(--wpds-dimension-padding-sm, 8px);
+	color: var(--wpds-color-fg-content-neutral, #1e1e1e);
+
+	svg {
+		fill: currentColor;
+	}
+}
+
 .wrap > .notice,
 .wrap > div.updated,
 .wrap > div.error,
@@ -213,6 +288,76 @@ body.wc_booking_page_wc-bookings-dataviews #wpbody {
 
 #wc-bookings-dv-root {
 	margin-top: 0;
+}
+
+/* Empty state — matches CIAB's `<TabEmptyState>` visual. DataViews already
+   does `display:flex; align-items:center; justify-content:center; flex-grow:1`
+   on `.dataviews-no-results` — that gives vertical centering for free, but
+   only when the wrapper has a definite height. CIAB's `<Page>` provides one;
+   here we synthesize it by making the root a flex column that fills the
+   viewport (minus the admin bar + plugin header above it) and letting the
+   DataViews wrapper grow to fit. The toolbar then sits on top and the
+   no-results area takes the rest, centering its child both axes. */
+#wc-bookings-dv-root {
+	display: flex;
+	flex-direction: column;
+	min-height: calc(100vh - 124px);
+}
+
+/* The React app wraps `<DataViews>` in an unclassed `<div ref={rootRef}>` so
+   the MutationObserver can find the toolbar. That intermediate div breaks
+   the flex chain — make it a transparent flex passthrough. */
+#wc-bookings-dv-root > div {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+}
+
+#wc-bookings-dv-root .dataviews-wrapper {
+	flex: 1;
+}
+
+.wc-bookings-dv-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	text-align: center;
+	gap: 8px;
+	color: #1e1e1e;
+	text-wrap: balance;
+}
+
+.wc-bookings-dv-empty__visual {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin-block-end: 8px;
+	color: #757575;
+	line-height: 1;
+}
+
+.wc-bookings-dv-empty__title {
+	margin: 0;
+	font-weight: 500;
+	font-size: 16px;
+	line-height: 1.4;
+}
+
+.wc-bookings-dv-empty__description {
+	max-width: 350px;
+	margin: 0;
+	font-size: 13px;
+	color: #757575;
+	line-height: 1.4;
+}
+
+.wc-bookings-dv-empty__actions {
+	display: flex;
+	margin-block-start: 16px;
+	gap: 8px;
+	align-items: center;
+	justify-content: center;
 }
 
 /* --- Booking detail page ------------------------------------------------ */
@@ -245,10 +390,77 @@ body.wc_booking_page_wc-bookings-dataviews #wpbody {
    shouty inside a card-layout detail page. Scoped to our detail wrap so
    it doesn't bleed into the list view's column headers. */
 .wc-bookings-dv-detail {
+	/* Match CIAB's `.booking-single-view` max-width, centered on the
+	   page, so cards don't stretch full-page on wide screens. */
+	width: 100%;
+	max-width: 660px;
+	margin-inline: auto;
+	/* CIAB has 33px between the page header and the first card; the
+	   admin-ui Page `has-padding` only provides 16px, so add 17px. */
+	padding-top: 17px;
+
+	/* Hide the bare em-dash placeholder some field renders fall back to
+	   when there's no value (e.g. attendance with no recorded state).
+	   The dash sits next to the card chevron and reads as noise. We
+	   only target unstyled spans that are the only child of the
+	   summary slot — real values render as Badges or composite nodes
+	   with their own classNames, so they're not affected. */
+	.dataforms-layouts-card__field-summary > span:only-child:not([class]) {
+		display: none;
+	}
+
+	/* Match CIAB's label styling — uppercase 11px medium-weight grey.
+	   DataViews' current default is regular-case 13px/400, which is
+	   the Storybook look; CIAB deliberately overrides it for the
+	   booking detail screen and we follow that here. */
 	.dataforms-layouts-panel__field-label,
 	.dataforms-layouts-regular__field-label {
-		text-transform: none;
+		font-size: 11px;
+		font-weight: 500;
+		text-transform: uppercase;
 		letter-spacing: normal;
+	}
+
+	/* Per-row dividers inside cards (also CIAB-specific). Each row in
+	   the card's field list gets a 1px bottom border + 16px padding,
+	   except the last row which keeps the card edge clean. */
+	.dataforms-layouts-card__field .dataforms-layouts__wrapper > * {
+		border-bottom: 1px solid rgb( 228, 228, 228 );
+		padding-bottom: 16px;
+	}
+	.dataforms-layouts-card__field .dataforms-layouts__wrapper > *:last-child {
+		border-bottom: 0;
+		padding-bottom: 0;
+	}
+	/* The payment breakdown already provides its own internal dividers
+	   (between data rows + above Total); the card-row divider beneath
+	   it would read as a duplicate line, so suppress it. */
+	.dataforms-layouts-card__field
+		.dataforms-layouts__wrapper
+		> *:has( .wc-bookings-dv-detail__payment-breakdown ) {
+		border-bottom: 0;
+	}
+
+	/* Tighten the vertical gap above any "action row" inside cards.
+	   The preceding row's 16px `padding-bottom` would otherwise stack
+	   on top of the wrapper's 16px `gap`. Drop both the padding-bottom
+	   AND the divider — the buttons themselves are the visual stop. */
+	.dataforms-layouts-card__field
+		.dataforms-layouts__wrapper
+		> *:has( + * .wc-bookings-dv-detail__action-row ) {
+		padding-bottom: 0;
+		border-bottom: 0;
+	}
+
+	/* DataViews colors field values grey via a more specific
+	   `.field-trigger.is-disabled .field-control` rule (read-only
+	   fields always get `.is-disabled` on the trigger). Match the
+	   same depth so we win and the values render as primary content. */
+	.dataforms-layouts-panel__field-trigger.is-disabled
+		.dataforms-layouts-panel__field-control,
+	.dataforms-layouts-regular__field-trigger.is-disabled
+		.dataforms-layouts-regular__field-control {
+		color: var( --wpds-color-fg-content-neutral, rgb( 30, 30, 30 ) );
 	}
 }
 
@@ -279,36 +491,97 @@ body.wc_booking_page_wc-bookings-dataviews #wpbody {
 	}
 }
 
-/* BookingPaymentBreakdown — line items + total. */
+/* BookingPaymentBreakdown — table mirroring CIAB's
+   `.booking-payment-dataviews` layout: a label column on the left and
+   an "Amount" column on the right, with the total separated by a top
+   rule in the tfoot. */
 .wc-bookings-dv-detail__payment-breakdown {
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-}
-
-.wc-bookings-dv-detail__payment-row {
-	display: flex;
-	justify-content: space-between;
-	align-items: baseline;
-	gap: 16px;
+	width: 100%;
+	border-collapse: collapse;
 	font-size: 13px;
+
+	th,
+	td {
+		padding: 12px 0;
+		text-align: left;
+		font-weight: 400;
+	}
+	td,
+	th[scope="col"]:last-child,
+	tfoot td {
+		text-align: right;
+	}
+	thead th {
+		color: var( --wpds-color-fg-content-neutral, rgb( 30, 30, 30 ) );
+		font-size: 11px;
+		font-weight: 500;
+		text-transform: uppercase;
+		letter-spacing: normal;
+		border-bottom: 1px solid rgb( 228, 228, 228 );
+	}
+	tbody tr + tr th,
+	tbody tr + tr td {
+		border-top: 1px solid rgb( 228, 228, 228 );
+	}
+	tfoot th,
+	tfoot td {
+		border-top: 1px solid rgb( 228, 228, 228 );
+		/* No bottom padding so the gap to the action row below
+		   matches the date/time row's gap — both end at their text. */
+		padding-bottom: 0;
+		font-weight: 600;
+	}
 }
 
-.wc-bookings-dv-detail__payment-row--total {
-	padding-top: 8px;
-	border-top: 1px solid #dcdcde;
-	font-weight: 600;
+/* Customer card name row — name grows to fill, Registered badge
+   collapses to content width and sits at the right edge. Mirrors
+   CIAB, which sets `flex: 0 0 1%` on the badge field-control. */
+.wc-bookings-dv-detail__customer-card
+	.dataforms-layouts-row__field-control:has( .wc-bookings-dv-detail__customer-name ) {
+	flex: 1;
+}
+.wc-bookings-dv-detail__customer-card
+	.dataforms-layouts-row__field-control:has( > .dataforms-layouts-regular__field > [class*="badge"] ) {
+	flex: 0 0 auto;
+	width: max-content;
 }
 
-/* BookingCustomerDetails — vertical stack of name/email/phone. */
+/* BookingCustomerDetails — labeled sections: name, email, billing,
+   note. Each labeled section uses the same uppercase 11px label style
+   as the rest of the cards; the name section has no label and uses
+   the regular content color. */
 .wc-bookings-dv-detail__customer-details {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
 	font-size: 13px;
+	color: var( --wpds-color-fg-content-neutral, rgb( 30, 30, 30 ) );
 }
 
-.wc-bookings-dv-detail__customer-details-row {
+.wc-bookings-dv-detail__customer-section {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding-bottom: 16px;
+	border-bottom: 1px solid rgb( 228, 228, 228 );
+
+	&:last-child {
+		padding-bottom: 0;
+		border-bottom: 0;
+	}
+
+	& + & {
+		padding-top: 16px;
+	}
+}
+
+.wc-bookings-dv-detail__customer-label {
+	font-size: 11px;
+	font-weight: 500;
+	text-transform: uppercase;
+	color: rgb( 117, 117, 117 );
+}
+
+.wc-bookings-dv-detail__customer-value {
 	line-height: 1.5;
 }
 

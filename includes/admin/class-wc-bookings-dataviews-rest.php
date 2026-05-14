@@ -101,6 +101,10 @@ class WC_Bookings_DataViews_REST {
 						'default'           => '',
 						'sanitize_callback' => 'sanitize_key',
 					),
+					'payment_status' => array(
+						'default'           => '',
+						'sanitize_callback' => 'sanitize_key',
+					),
 				),
 			)
 		);
@@ -225,6 +229,26 @@ class WC_Bookings_DataViews_REST {
 				),
 			)
 		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/dataviews/bookings/update',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => $capability_check,
+				'callback'            => array( $this, 'update_booking' ),
+				'args'                => array(
+					'id'     => array(
+						'required'          => true,
+						'sanitize_callback' => 'absint',
+					),
+					'fields' => array(
+						'required' => true,
+						'type'     => 'object',
+					),
+				),
+			)
+		);
 	}
 
 	/**
@@ -264,7 +288,17 @@ class WC_Bookings_DataViews_REST {
 			if ( 'wc_booking' !== get_post_type( $id ) ) {
 				continue;
 			}
-			update_post_meta( $id, '_booking_attendance_status', 'attended' );
+			// Go through the WC_Booking setter + save so the data store
+			// invalidates its object cache. A direct `update_post_meta()`
+			// would persist the value but leave the cached booking object
+			// stale, causing subsequent reads (including the page's
+			// refresh-after-action) to return the old attendance.
+			$booking = get_wc_booking( $id );
+			if ( ! $booking ) {
+				continue;
+			}
+			$booking->set_attendance_status( 'attended' );
+			$booking->save();
 			$updated[] = $id;
 		}
 		return rest_ensure_response( array( 'updated' => $updated ) );
@@ -283,10 +317,112 @@ class WC_Bookings_DataViews_REST {
 			if ( 'wc_booking' !== get_post_type( $id ) ) {
 				continue;
 			}
-			update_post_meta( $id, '_booking_attendance_status', 'unattended' );
+			// Go through the WC_Booking setter + save (see mark_attended).
+			$booking = get_wc_booking( $id );
+			if ( ! $booking ) {
+				continue;
+			}
+			$booking->set_attendance_status( 'unattended' );
+			$booking->save();
 			$updated[] = $id;
 		}
 		return rest_ensure_response( array( 'updated' => $updated ) );
+	}
+
+	/**
+	 * Update a booking's editable fields in one shot. Accepts `{ fields:
+	 * { note?, ... } }` and applies each known field via its proper
+	 * setter, then returns the refreshed booking detail shape so the
+	 * client can rehydrate from the response (no follow-up GET).
+	 *
+	 * Future editable fields go here; for each new key, add a
+	 * `case 'foo'` branch with the right setter / save call.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function update_booking( WP_REST_Request $request ) {
+		$id = absint( $request['id'] );
+		if ( 'wc_booking' !== get_post_type( $id ) ) {
+			return new WP_Error(
+				'wc_bookings_dv_not_found',
+				__( 'Booking not found.', 'woocommerce-bookings' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$fields = (array) $request['fields'];
+		$order  = null;
+		foreach ( $fields as $key => $value ) {
+			switch ( $key ) {
+				case 'note':
+					$result = wp_update_post(
+						array(
+							'ID'           => $id,
+							'post_excerpt' => wp_kses_post( (string) $value ),
+						),
+						true
+					);
+					if ( is_wp_error( $result ) ) {
+						return $result;
+					}
+					break;
+				case 'billing':
+					if ( ! is_array( $value ) ) {
+						break;
+					}
+					if ( null === $order ) {
+						$b     = get_wc_booking( $id );
+						$order = $b && $b->get_order_id()
+							? wc_get_order( $b->get_order_id() )
+							: null;
+					}
+					if ( ! $order ) {
+						return new WP_Error(
+							'wc_bookings_dv_no_order',
+							__( 'This booking has no order to update.', 'woocommerce-bookings' ),
+							array( 'status' => 400 )
+						);
+					}
+					$setters = array(
+						'first_name',
+						'last_name',
+						'company',
+						'address_1',
+						'address_2',
+						'city',
+						'state',
+						'postcode',
+						'country',
+						'phone',
+					);
+					foreach ( $setters as $bkey ) {
+						if ( array_key_exists( $bkey, $value ) ) {
+							$setter = "set_billing_$bkey";
+							$order->$setter( sanitize_text_field( (string) $value[ $bkey ] ) );
+						}
+					}
+					if ( array_key_exists( 'email', $value ) ) {
+						$order->set_billing_email( sanitize_email( (string) $value['email'] ) );
+					}
+					$order->save();
+					break;
+				// Add new editable fields here.
+			}
+		}
+
+		$booking = get_wc_booking( $id );
+		$post    = get_post( $id );
+		if ( ! $booking || ! $post ) {
+			return new WP_Error(
+				'wc_bookings_dv_not_found',
+				__( 'Booking not found.', 'woocommerce-bookings' ),
+				array( 'status' => 404 )
+			);
+		}
+		return rest_ensure_response(
+			$this->shape_booking_detail( $booking, $post )
+		);
 	}
 
 	/**
@@ -338,10 +474,25 @@ class WC_Bookings_DataViews_REST {
 		$base['end_time_display']        = $end_dt ? wp_date( $time_format, $end_dt->getTimestamp() ) : '';
 		$base['is_same_day']             = ( $start_dt && $end_dt && $start_dt->format( 'Y-m-d' ) === $end_dt->format( 'Y-m-d' ) );
 
-		// Duration for the ServiceInfo row.
+		$all_day = (bool) get_post_meta( $post->ID, '_booking_all_day', true );
+
+		// Duration for the ServiceInfo row. All-day bookings always span the
+		// full 00:00-23:59 range internally, so reporting "23 hours 59 minutes"
+		// would leak that detail — show day-granular text instead, matching
+		// how core WC Bookings handles all-day everywhere else.
 		$duration_seconds         = ( $start_dt && $end_dt ) ? ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) : 0;
 		$base['duration_seconds'] = $duration_seconds;
-		$base['duration_display'] = self::format_duration_human( $duration_seconds );
+		if ( $all_day && $start_dt && $end_dt ) {
+			$days = (int) $start_dt->setTime( 0, 0, 0 )->diff( $end_dt->setTime( 0, 0, 0 ) )->days + 1;
+			if ( $days <= 1 ) {
+				$base['duration_display'] = __( 'All day', 'woocommerce-bookings' );
+			} else {
+				/* translators: %d: number of days */
+				$base['duration_display'] = sprintf( _n( '%d day', '%d days', $days, 'woocommerce-bookings' ), $days );
+			}
+		} else {
+			$base['duration_display'] = self::format_duration_human( $duration_seconds );
+		}
 
 		// Product thumbnail — extends the list shape's `product` block.
 		$product = $booking->get_product();
@@ -352,15 +503,14 @@ class WC_Bookings_DataViews_REST {
 			$base['product']['thumbnail'] = $thumbnail ? $thumbnail[0] : '';
 		}
 
-		// Customer phone / extra details.
+		// Customer phone (detail-only — user_id / profile_url already on base).
 		$customer = $booking->get_customer();
 		if ( isset( $base['customer'] ) && is_array( $base['customer'] ) ) {
-			$base['customer']['phone']   = isset( $customer->phone ) ? $customer->phone : '';
-			$base['customer']['user_id'] = isset( $customer->user_id ) ? (int) $customer->user_id : 0;
+			$base['customer']['phone'] = isset( $customer->phone ) ? $customer->phone : '';
 		}
 
 		// Booking flags / extras.
-		$base['all_day']  = (bool) get_post_meta( $post->ID, '_booking_all_day', true );
+		$base['all_day']  = $all_day;
 		$base['note']     = (string) $post->post_excerpt;
 		$base['date_created'] = mysql_to_rfc3339( $post->post_date_gmt );
 
@@ -368,20 +518,92 @@ class WC_Bookings_DataViews_REST {
 		$order_id = (int) get_post_meta( $post->ID, '_booking_order_item_id', true );
 		$order    = $booking->get_order();
 		if ( $order ) {
-			$base['order']['status']       = $order->get_status();
-			$base['order']['status_label'] = wc_get_order_status_name( $order->get_status() );
-			$base['order']['date_paid']    = $order->get_date_paid() ? $order->get_date_paid()->date( DATE_ATOM ) : null;
-			$base['order']['total']        = (float) $order->get_total();
-			$base['order']['total_display'] = html_entity_decode( wp_strip_all_tags( wc_price( (float) $order->get_total() ) ), ENT_QUOTES, 'UTF-8' );
-			$base['order']['currency']     = $order->get_currency();
+			$fmt = static function ( $v ) {
+				return html_entity_decode(
+					wp_strip_all_tags( wc_price( (float) $v ) ),
+					ENT_QUOTES,
+					'UTF-8'
+				);
+			};
+
+			$base['order']['status']        = $order->get_status();
+			$base['order']['date_paid']     = $order->get_date_paid() ? $order->get_date_paid()->date( DATE_ATOM ) : null;
+			$base['order']['total']         = (float) $order->get_total();
+			$base['order']['total_display'] = $fmt( $order->get_total() );
+			$base['order']['currency']      = $order->get_currency();
+
+			// Line items + subtotal/tax/discount totals power the
+			// breakdown table on the booking detail page (matches
+			// CIAB's `booking-payment-dataviews` table).
+			$line_items = array();
+			foreach ( $order->get_items() as $item_id => $item ) {
+				$line_items[] = array(
+					'id'            => $item_id,
+					'name'          => $item->get_name(),
+					'total'         => (float) $item->get_total(),
+					'total_display' => $fmt( $item->get_total() ),
+				);
+			}
+			$base['order']['line_items']             = $line_items;
+			$base['order']['subtotal']               = (float) $order->get_subtotal();
+			$base['order']['subtotal_display']       = $fmt( $order->get_subtotal() );
+			$base['order']['total_tax']              = (float) $order->get_total_tax();
+			$base['order']['total_tax_display']      = $fmt( $order->get_total_tax() );
+			$base['order']['discount_total']         = (float) $order->get_discount_total();
+			$base['order']['discount_total_display'] = $fmt( $order->get_discount_total() );
+
+			// Customer's checkout note (the message they leave at
+			// checkout) — this is what CIAB surfaces under the
+			// Customer card's "Note" section, not admin-side
+			// `wc_get_order_notes()` entries.
+			$customer_note         = (string) $order->get_customer_note();
+			$base['order']['note'] = '' !== $customer_note ? $customer_note : null;
+
+			// Billing details — powers the Billing information section
+			// of the Customer card on the detail page. We ask WC to
+			// format the address with `<br/>` separators (its default)
+			// then split on the tag, so each line stays distinct after
+			// `wp_strip_all_tags` would otherwise collapse them.
+			$formatted_html = (string) $order->get_formatted_billing_address(
+				'<br/>'
+			);
+			$formatted_lines = array_filter(
+				array_map(
+					static function ( $line ) {
+						return trim( wp_strip_all_tags( $line ) );
+					},
+					preg_split( '#<br\s*/?>#i', $formatted_html )
+				),
+				static function ( $line ) {
+					return '' !== $line;
+				}
+			);
+
+			$base['order']['billing'] = array(
+				'first_name'      => $order->get_billing_first_name(),
+				'last_name'       => $order->get_billing_last_name(),
+				'company'         => $order->get_billing_company(),
+				'address_1'       => $order->get_billing_address_1(),
+				'address_2'       => $order->get_billing_address_2(),
+				'city'            => $order->get_billing_city(),
+				'state'           => $order->get_billing_state(),
+				'postcode'        => $order->get_billing_postcode(),
+				'country'         => $order->get_billing_country(),
+				'email'           => $order->get_billing_email(),
+				'phone'           => $order->get_billing_phone(),
+				'formatted_lines' => array_values( $formatted_lines ),
+			);
 		}
 
 		// Capability flags that drive button visibility on the client.
 		$base['can'] = array(
 			'cancel'           => ! in_array( $booking->get_status(), array( 'cancelled', 'complete' ), true ),
 			'mark_paid'        => ! in_array( $booking->get_status(), array( 'paid', 'complete', 'cancelled', 'refunded' ), true ),
-			'mark_attended'    => ! empty( $base['is_past'] ) && 'attended' !== $base['attendance_status'],
-			'mark_unattended'  => ! empty( $base['is_past'] ) && 'unattended' !== $base['attendance_status'],
+			// Symmetric: only offer the flip when there's a concrete
+			// opposite state to flip from. Null/missing attendance →
+			// neither action is meaningful.
+			'mark_attended'    => ! empty( $base['is_past'] ) && 'unattended' === $base['attendance_status'],
+			'mark_unattended'  => ! empty( $base['is_past'] ) && 'attended' === $base['attendance_status'],
 			'view_order'       => ! empty( $base['order'] ),
 		);
 
@@ -516,6 +738,84 @@ class WC_Bookings_DataViews_REST {
 	}
 
 	/**
+	 * Resolve a payment_status filter value to the set of booking IDs that
+	 * should be shown. The booking→order link lives in `post_parent` on the
+	 * wc_booking post (same field WC_Booking_Data_Store reads); using it
+	 * here keeps the filter consistent with what `paymentStateFor` displays.
+	 * HPOS-compatible: post_parent holds the order ID regardless of where
+	 * the order itself is stored.
+	 *
+	 * @return int[]
+	 */
+	private static function booking_ids_for_payment_state( $state ) {
+		global $wpdb;
+
+		if ( 'no_order' === $state ) {
+			return array_map(
+				'intval',
+				(array) $wpdb->get_col(
+					"SELECT ID FROM {$wpdb->posts}
+					WHERE post_type = 'wc_booking'
+					AND ( post_parent = 0 OR post_parent IS NULL )"
+				)
+			);
+		}
+
+		$order_ids = array();
+		switch ( $state ) {
+			case 'paid':
+				$regular = wc_get_orders( array(
+					'status' => array( 'processing', 'completed' ),
+					'limit'  => -1,
+					'return' => 'ids',
+				) );
+				$cancelled_paid = wc_get_orders( array(
+					'status'    => array( 'cancelled' ),
+					'limit'     => -1,
+					'return'    => 'ids',
+					'date_paid' => '>0',
+				) );
+				$order_ids = array_unique( array_merge( (array) $regular, (array) $cancelled_paid ) );
+				break;
+			case 'unpaid':
+				// Everything that isn't paid/refunded/cancelled — including
+				// checkout-draft and any extension-registered statuses.
+				$all_statuses    = array_map(
+					static function ( $s ) { return preg_replace( '/^wc-/', '', $s ); },
+					array_keys( wc_get_order_statuses() )
+				);
+				$unpaid_statuses = array_values( array_diff( $all_statuses, array( 'processing', 'completed', 'refunded', 'cancelled' ) ) );
+				$order_ids       = (array) wc_get_orders( array(
+					'status' => $unpaid_statuses,
+					'limit'  => -1,
+					'return' => 'ids',
+				) );
+				break;
+			case 'refunded':
+				$order_ids = (array) wc_get_orders( array(
+					'status' => array( 'refunded' ),
+					'limit'  => -1,
+					'return' => 'ids',
+				) );
+				break;
+		}
+
+		if ( empty( $order_ids ) ) {
+			return array();
+		}
+
+		$order_ids_csv = implode( ',', array_map( 'intval', $order_ids ) );
+		return array_map(
+			'intval',
+			(array) $wpdb->get_col(
+				"SELECT ID FROM {$wpdb->posts}
+				WHERE post_type = 'wc_booking'
+				AND post_parent IN ($order_ids_csv)" // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			)
+		);
+	}
+
+	/**
 	 * Get filter options (products and resources).
 	 *
 	 * @return WP_REST_Response
@@ -589,8 +889,9 @@ class WC_Bookings_DataViews_REST {
 		$resource    = (int) $request['resource'];
 		$start_range = (string) $request['start_range'];
 		$end_range   = (string) $request['end_range'];
-		$tab         = (string) $request['tab'];
-		$attendance  = (string) $request['attendance'];
+		$tab            = (string) $request['tab'];
+		$attendance     = (string) $request['attendance'];
+		$payment_status = (string) $request['payment_status'];
 
 		$args = array(
 			'post_type'      => 'wc_booking',
@@ -675,6 +976,34 @@ class WC_Bookings_DataViews_REST {
 									'compare' => 'IN',
 								),
 							),
+						)
+					)
+				);
+			}
+
+			// Customer name / email match for guest bookings. The user-table
+			// lookup above only catches registered customers; everyone who
+			// checks out as a guest has their info on the parent order's
+			// billing address. `wc_get_orders` with `s` is HPOS-aware and
+			// searches billing first/last name + email.
+			$order_match_ids = wc_get_orders(
+				array(
+					'limit'  => -1,
+					'return' => 'ids',
+					'status' => 'any',
+					's'      => $search,
+				)
+			);
+			if ( ! empty( $order_match_ids ) ) {
+				$matched_ids = array_merge(
+					$matched_ids,
+					get_posts(
+						array(
+							'post_type'       => 'wc_booking',
+							'post_status'     => 'any',
+							'posts_per_page'  => -1,
+							'fields'          => 'ids',
+							'post_parent__in' => array_map( 'intval', $order_match_ids ),
 						)
 					)
 				);
@@ -810,6 +1139,11 @@ class WC_Bookings_DataViews_REST {
 			}
 		}
 
+		if ( $payment_status ) {
+			$matching_ids = self::booking_ids_for_payment_state( $payment_status );
+			$args['post__in'] = empty( $matching_ids ) ? array( 0 ) : $matching_ids;
+		}
+
 		if ( $tab ) {
 			$tz             = wp_timezone();
 			$now            = new DateTimeImmutable( 'now', $tz );
@@ -882,6 +1216,21 @@ class WC_Bookings_DataViews_REST {
 				$args['orderby']  = 'meta_value_num';
 				$args['order']    = $order;
 				break;
+			case 'resource':
+				$args['meta_key'] = '_booking_resource_id'; // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+				$args['orderby']  = 'meta_value_num';
+				$args['order']    = $order;
+				break;
+			case 'customer':
+				// Group bookings by registered customer id. Guests (user_id = 0)
+				// land together at the top/bottom of the sort. True alphabetic
+				// sort would require a JOIN against wp_users.display_name plus
+				// guest names on the parent order — out of scope for the meta
+				// query path WP_Query supports.
+				$args['meta_key'] = '_booking_customer_id'; // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+				$args['orderby']  = 'meta_value_num';
+				$args['order']    = $order;
+				break;
 			case 'booking_id':
 			default:
 				$args['orderby'] = 'ID';
@@ -941,6 +1290,22 @@ class WC_Bookings_DataViews_REST {
 
 		$person_counts = $booking->get_person_counts();
 		$num_persons   = ! empty( $person_counts ) ? (int) array_sum( $person_counts ) : null;
+
+		$person_counts_breakdown = array();
+		if ( ! empty( $person_counts ) ) {
+			foreach ( $person_counts as $person_id => $count ) {
+				try {
+					$person_type = new WC_Product_Booking_Person_Type( $person_id );
+				} catch ( Exception $e ) {
+					continue;
+				}
+				$person_counts_breakdown[] = array(
+					'key'   => $person_type->get_name(),
+					'value' => (int) $count,
+				);
+			}
+		}
+
 		$attendance    = $booking->get_attendance_status();
 		$cost          = (float) $booking->get_cost();
 		$end           = (string) get_post_meta( $post->ID, '_booking_end', true );
@@ -956,19 +1321,27 @@ class WC_Bookings_DataViews_REST {
 			'is_past'                 => ( '' !== $end && $end < $now ),
 			'is_today'                => ( '' !== $start && '' !== $end && $start <= $now && $end >= $now ),
 			'status'                  => $booking->get_status(),
-			'status_label'            => function_exists( 'wc_bookings_get_status_label' ) ? wc_bookings_get_status_label( $booking->get_status() ) : $booking->get_status(),
 			'attendance_status'       => $attendance ? $attendance : null,
-			'attendance_status_label' => $attendance ? ( 'attended' === $attendance ? __( 'Attended', 'woocommerce-bookings' ) : __( 'Unattended', 'woocommerce-bookings' ) ) : null,
 			'product'                 => $product_data,
 			'num_of_persons'          => $num_persons,
+			'person_counts'           => $person_counts_breakdown,
 			'customer'                => array(
-				'name'  => isset( $customer->name ) ? $customer->name : '',
-				'email' => isset( $customer->email ) ? $customer->email : '',
+				// Core WC Bookings appends " (Guest)" to the name when the
+				// customer isn't registered. The "Registered" badge in the
+				// Customer card carries that signal, so the suffix is
+				// redundant noise — strip it on the way out.
+				'name'    => isset( $customer->name )
+					? trim( (string) preg_replace( '/\s*\(Guest\)\s*$/i', '', (string) $customer->name ) )
+					: '',
+				'email'   => isset( $customer->email ) ? $customer->email : '',
+				'user_id' => isset( $customer->user_id ) ? (int) $customer->user_id : 0,
 			),
 			'order'                   => $order ? array(
-				'id'       => $order->get_id(),
-				'number'   => $order->get_order_number(),
-				'edit_url' => $order->get_edit_order_url(),
+				'id'        => $order->get_id(),
+				'number'    => $order->get_order_number(),
+				'edit_url'  => $order->get_edit_order_url(),
+				'status'    => $order->get_status(),
+				'date_paid' => $order->get_date_paid() ? $order->get_date_paid()->date( DATE_ATOM ) : null,
 			) : null,
 			'start_date'              => $booking->get_start_date(),
 			'end_date'                => $booking->get_end_date(),

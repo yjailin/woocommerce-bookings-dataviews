@@ -31,11 +31,15 @@
  * Field id naming follows CIAB exactly (hyphen-separated for "button group"
  * renderers, snake_case for content composites — matches the PHP config).
  *
+ * Editable fields (`note` for now) flow through a local `pendingEdits`
+ * buffer in `BookingDetail` — DataForm writes to the buffer on change, the
+ * Save button in the page header flushes the buffer through the
+ * `bookings/update` REST endpoint, and `pendingEdits` is cleared after a
+ * successful save.
+ *
  * Skipped vs. CIAB:
  *   • `booking_location` — WC Bookings core has no booking-level location.
  *   • `useTrack` / `useTrackedModal` — telemetry, not needed here.
- *   • Editing — `note` is rendered read-only; save flow needs core-data
- *     entity registration (separate Phase 1+2 work).
  */
 
 import {
@@ -44,13 +48,14 @@ import {
 	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 import { __, sprintf } from '@wordpress/i18n';
-import { Spinner, Notice } from '@wordpress/components';
+import { Spinner, Notice, DropdownMenu } from '@wordpress/components';
 import { Page, Breadcrumbs } from '@wordpress/admin-ui';
-import { Badge, Button, Stack } from '@wordpress/ui';
+import { AlertDialog, Badge, Button, Stack } from '@wordpress/ui';
 import {
 	createMemoryHistory,
 	createRootRoute,
@@ -60,8 +65,9 @@ import {
 import { DataForm } from '@wordpress/dataviews';
 import { useDispatch } from '@wordpress/data';
 import { store as noticesStore } from '@wordpress/notices';
-import { Icon, box } from '@wordpress/icons';
-import { buildFields } from './fields';
+import { Icon, box, mapMarker, moreVertical } from '@wordpress/icons';
+import { __experimentalInputControl as InputControl } from '@wordpress/components';
+import { buildFields, paymentStateFor, PAYMENT_MAP } from './fields';
 
 const REST_BASE = window.WC_BOOKINGS_DATAVIEWS_DATA?.restUrl || '';
 const LIST_URL = window.WC_BOOKINGS_DATAVIEWS_DATA?.listUrl || '';
@@ -77,17 +83,15 @@ const BookingDetailContext = createContext( { onRefresh: () => {} } );
 // Header helpers
 // =============================================================================
 
-const PAYMENT_BADGE = {
-	unpaid: { intent: 'low', label: __( 'Unpaid', 'woocommerce-bookings' ) },
-	'pending-confirmation': {
-		intent: 'low',
-		label: __( 'Unpaid', 'woocommerce-bookings' ),
-	},
-	confirmed: { intent: 'low', label: __( 'Unpaid', 'woocommerce-bookings' ) },
-	paid: { intent: 'none', label: __( 'Paid', 'woocommerce-bookings' ) },
-	complete: { intent: 'none', label: __( 'Paid', 'woocommerce-bookings' ) },
-	refunded: { intent: 'none', label: __( 'Refunded', 'woocommerce-bookings' ) },
-};
+// Header badge derived from the underlying order. The list view's Payment
+// column shows "N/A" / "—" for the no-order and cancelled-never-paid
+// cases; in the header those collapse to "no badge" since standalone
+// placeholder text doesn't belong next to the booking ID.
+function getPaymentBadge( booking ) {
+	const state = paymentStateFor( booking );
+	if ( ! state ) return null;
+	return PAYMENT_MAP[ state ] || null;
+}
 
 const ATTENDANCE_FIELD = buildFields().find(
 	( f ) => f.id === 'attendance_status'
@@ -95,16 +99,16 @@ const ATTENDANCE_FIELD = buildFields().find(
 
 function HeaderBadges( { booking } ) {
 	const isCancelled = booking.status === 'cancelled';
-	const pBadge = PAYMENT_BADGE[ booking.status ];
+	const pBadge = getPaymentBadge( booking );
 
-	// Only render the attendance field when it will produce a real Badge.
-	// The field's own `render` falls back to a "—" span when the booking
-	// has no recorded attendance and isn't in the past — we don't want
-	// that placeholder in the header.
+	// Attendance only makes sense once the booking has happened. The
+	// core WC_Booking prop defaults to `unattended` for every booking,
+	// so this is what hides the misleading default for future bookings
+	// without changing the underlying data the list view shows.
 	const hasAttendance =
-		booking.attendance_status === 'attended' ||
-		booking.attendance_status === 'unattended' ||
-		booking.is_past;
+		booking.is_past &&
+		( booking.attendance_status === 'attended' ||
+			booking.attendance_status === 'unattended' );
 
 	return (
 		<>
@@ -188,7 +192,18 @@ function getSubtitle( booking ) {
 }
 
 function getDateTimeStringFromBooking( booking ) {
-	if ( ! booking.start_date_only_display || ! booking.start_time_display ) {
+	if ( ! booking.start_date_only_display ) {
+		return '—';
+	}
+	// Core WC Bookings never shows times for all-day bookings — see
+	// WC_Booking::get_start_date()'s is_all_day() branch.
+	if ( booking.all_day ) {
+		if ( booking.end_date && booking.end_date !== booking.start_date ) {
+			return booking.start_date_only_display + ' – ' + booking.end_date;
+		}
+		return booking.start_date_only_display;
+	}
+	if ( ! booking.start_time_display ) {
 		return '—';
 	}
 	return (
@@ -321,55 +336,404 @@ function DateTimeRender( { item } ) {
 }
 
 /**
- * BookingPaymentBreakdown — line items + total.
- * CIAB's full implementation reads `order.line_items`; we don't expose those
- * separately yet, so we render a single service line + total row from the
- * booking + order totals we already ship.
+ * BookingPaymentBreakdown — line items + tax + discount + total.
+ * Mirrors CIAB's `booking-payment-dataviews` table: a header row with an
+ * "Amount" column, each order line item, then tax and discount totals,
+ * then a separated Total row at the bottom.
  */
 function BookingPaymentBreakdown( { item } ) {
-	const serviceName = item.product?.title || __( 'Service', 'woocommerce-bookings' );
-	const lineTotal = item.total_display || '—';
-	const orderTotal = item.order?.total_display || lineTotal;
+	const order = item.order;
+	const fallbackLine = {
+		id: 'fallback',
+		name:
+			item.product?.title ||
+			__( 'Service', 'woocommerce-bookings' ),
+		total_display: item.total_display || '—',
+	};
+	const lineItems =
+		order?.line_items && order.line_items.length > 0
+			? order.line_items
+			: [ fallbackLine ];
+	const totalDisplay =
+		order?.total_display || item.total_display || '—';
+	// Currency-correct "$0.00" fallback for Tax / Discount when no
+	// order is associated: take the booking's own total_display string
+	// and swap the numeric portion for "0.00" so the symbol/locale are
+	// preserved.
+	const zeroPrice = ( item.total_display || '0.00' ).replace(
+		/[\d,.]+/,
+		'0.00'
+	);
 	return (
-		<div className="wc-bookings-dv-detail__payment-breakdown">
-			<div className="wc-bookings-dv-detail__payment-row">
-				<span>{ serviceName }</span>
-				<span>{ lineTotal }</span>
-			</div>
-			<div className="wc-bookings-dv-detail__payment-row wc-bookings-dv-detail__payment-row--total">
-				<span>{ __( 'Total', 'woocommerce-bookings' ) }</span>
-				<span>{ orderTotal }</span>
-			</div>
-		</div>
+		<table className="wc-bookings-dv-detail__payment-breakdown">
+			<thead>
+				<tr>
+					<th scope="col">
+						{ __( 'Price breakdown', 'woocommerce-bookings' ) }
+					</th>
+					<th scope="col">
+						{ __( 'Amount', 'woocommerce-bookings' ) }
+					</th>
+				</tr>
+			</thead>
+			<tbody>
+				{ lineItems.map( ( li ) => (
+					<tr key={ li.id }>
+						<th scope="row">{ li.name }</th>
+						<td>{ li.total_display }</td>
+					</tr>
+				) ) }
+				<tr>
+					<th scope="row">
+						{ __( 'Tax', 'woocommerce-bookings' ) }
+					</th>
+					<td>{ order?.total_tax_display || zeroPrice }</td>
+				</tr>
+				<tr>
+					<th scope="row">
+						{ __( 'Discount', 'woocommerce-bookings' ) }
+					</th>
+					<td>{ order?.discount_total_display || zeroPrice }</td>
+				</tr>
+			</tbody>
+			<tfoot>
+				<tr className="wc-bookings-dv-detail__payment-breakdown__total">
+					<th scope="row">
+						{ __( 'Total', 'woocommerce-bookings' ) }
+					</th>
+					<td>{ totalDisplay }</td>
+				</tr>
+			</tfoot>
+		</table>
 	);
 }
 
 /**
- * BookingCustomerDetails — name + email + phone composite.
- * Replaces CIAB's `booking_customer_details` field.
+ * Compose the three-line billing-address summary shown in the panel
+ * row. CIAB stacks "name", "address", and "phone" as separate lines
+ * inside the trigger, so the read-only view still resembles a postal
+ * address block. The first defined line gates whether the row renders
+ * the full block — if there's no billing data at all, the caller falls
+ * back to an em-dash.
  */
-function BookingCustomerDetails( { item } ) {
-	const c = item.customer || {};
-	if ( ! c.name && ! c.email && ! c.phone ) {
-		return <span>—</span>;
-	}
+function getBillingSummaryLines( b ) {
+	if ( ! b ) return null;
+	const name = [ b.first_name, b.last_name ].filter( Boolean ).join( ' ' );
+	const address = [
+		[ b.address_1, b.address_2 ].filter( Boolean ).join( ', ' ),
+		[
+			b.city,
+			[ b.state, b.postcode ].filter( Boolean ).join( ' ' ),
+		]
+			.filter( Boolean )
+			.join( ', ' ),
+	]
+		.filter( Boolean )
+		.join( ', ' );
+	const phone = b.phone || '';
+	if ( ! name && ! address && ! phone ) return null;
+	return { name, address, phone };
+}
+
+/**
+ * Build the field collection for the nested customer DataForm. Each
+ * billing field is a path-aware leaf (custom `getValue` + `setValue`
+ * walking into `item.order.billing.*`) so DataForm reads and writes the
+ * nested shape correctly. The two `*_summary` entries are virtual: they
+ * render the read-only summary text shown next to the panel's pencil
+ * icon and aren't editable themselves.
+ */
+const DASH = '—';
+
+function buildCustomerCardFields() {
+	const makeBilling = ( key, label, type = 'text', extras = {} ) => ( {
+		id: `billing_${ key }`,
+		type,
+		label,
+		getValue: ( { item } ) => item.order?.billing?.[ key ] ?? '',
+		setValue: ( { item, value } ) => ( {
+			order: {
+				...item.order,
+				billing: { ...item.order?.billing, [ key ]: value },
+			},
+		} ),
+		render: ( { item } ) =>
+			item.order?.billing?.[ key ] || DASH,
+		...extras,
+	} );
+
+	// Custom Edit for the address line inside the Billing modal. Mirrors
+	// CIAB's `AddressAutocompleteField` fallback (when the autocomplete
+	// service isn't available, CIAB renders a plain `InputControl`) plus
+	// the same `mapMarker` prefix the autocomplete variant uses. We don't
+	// have @automattic/design-system's `InputLayout.Slot` here — the
+	// `wc-bookings-dv-detail__field-prefix` class approximates its
+	// "minimal" padding and neutral-weak color in plain CSS.
+	const AddressLineEdit = ( { data, field, onChange } ) => {
+		const value = field.getValue( { item: data } ) ?? '';
+		return (
+			<InputControl
+				label={ field.label }
+				value={ value }
+				onChange={ ( next ) =>
+					onChange(
+						field.setValue( {
+							item: data,
+							value: next ?? '',
+						} )
+					)
+				}
+				prefix={
+					<span className="wc-bookings-dv-detail__field-prefix">
+						<Icon icon={ mapMarker } />
+					</span>
+				}
+				__next40pxDefaultSize
+			/>
+		);
+	};
+
+	return [
+		{
+			id: 'customer-name',
+			type: 'text',
+			label: __( 'Name', 'woocommerce-bookings' ),
+			readOnly: true,
+			getValue: ( { item } ) => item.customer?.name || '',
+			render: ( { item } ) => (
+				<div className="wc-bookings-dv-detail__customer-name">
+					{ item.customer?.name || DASH }
+				</div>
+			),
+		},
+		{
+			id: 'customer-registered',
+			type: 'text',
+			label: __( 'Customer status', 'woocommerce-bookings' ),
+			readOnly: true,
+			isVisible: ( item ) =>
+				( item.customer?.user_id ?? 0 ) > 0,
+			getValue: () => '',
+			render: () => (
+				<Badge intent="stable">
+					{ __( 'Registered', 'woocommerce-bookings' ) }
+				</Badge>
+			),
+		},
+		{
+			id: 'customer-note',
+			type: 'text',
+			label: __( 'Note', 'woocommerce-bookings' ),
+			readOnly: true,
+			getValue: ( { item } ) => item.order?.note || '',
+			render: ( { item } ) => item.order?.note || DASH,
+		},
+		makeBilling( 'email', __( 'Email', 'woocommerce-bookings' ), 'email' ),
+		{
+			id: 'billing_summary',
+			type: 'text',
+			label: __( 'Billing summary', 'woocommerce-bookings' ),
+			readOnly: true,
+			getValue: ( { item } ) => {
+				const lines = getBillingSummaryLines( item.order?.billing );
+				return lines
+					? [ lines.name, lines.address, lines.phone ]
+							.filter( Boolean )
+							.join( ' · ' )
+					: '';
+			},
+			render: ( { item } ) => {
+				const lines = getBillingSummaryLines( item.order?.billing );
+				if ( ! lines ) return DASH;
+				return (
+					<span className="wc-bookings-dv-detail__billing-summary">
+						<span>{ lines.name || DASH }</span>
+						<span>{ lines.address || DASH }</span>
+						<span>{ lines.phone || DASH }</span>
+					</span>
+				);
+			},
+		},
+		makeBilling( 'first_name', __( 'First name', 'woocommerce-bookings' ) ),
+		makeBilling( 'last_name', __( 'Last name', 'woocommerce-bookings' ) ),
+		makeBilling( 'company', __( 'Company', 'woocommerce-bookings' ) ),
+		makeBilling( 'country', __( 'Country', 'woocommerce-bookings' ) ),
+		makeBilling( 'address_1', __( 'Address line 1', 'woocommerce-bookings' ), 'text', {
+			Edit: AddressLineEdit,
+		} ),
+		makeBilling( 'address_2', __( 'Address line 2', 'woocommerce-bookings' ) ),
+		makeBilling( 'city', __( 'City', 'woocommerce-bookings' ) ),
+		makeBilling( 'state', __( 'State', 'woocommerce-bookings' ) ),
+		makeBilling( 'postcode', __( 'Postcode', 'woocommerce-bookings' ) ),
+		makeBilling( 'phone', __( 'Phone', 'woocommerce-bookings' ), 'telephone' ),
+	];
+}
+
+const CUSTOMER_CARD_FORM = {
+	fields: [
+		{
+			id: '_customer-header',
+			layout: { type: 'row' },
+			children: [
+				{
+					id: 'customer-name',
+					layout: { type: 'regular', labelPosition: 'none' },
+				},
+				{
+					id: 'customer-registered',
+					layout: { type: 'regular', labelPosition: 'none' },
+				},
+			],
+		},
+		{
+			id: 'email-section',
+			label: __( 'Email', 'woocommerce-bookings' ),
+			layout: {
+				type: 'panel',
+				openAs: 'modal',
+				labelPosition: 'top',
+				summary: [ 'billing_email' ],
+			},
+			children: [
+				{
+					id: 'billing_email',
+					layout: { type: 'regular', labelPosition: 'top' },
+				},
+			],
+		},
+		{
+			id: 'billing-section',
+			label: __( 'Billing information', 'woocommerce-bookings' ),
+			layout: {
+				type: 'panel',
+				openAs: 'modal',
+				labelPosition: 'top',
+				summary: [ 'billing_summary' ],
+			},
+			children: [
+				{
+					id: '_first-last',
+					layout: { type: 'row' },
+					children: [
+						{
+							id: 'billing_first_name',
+							layout: { type: 'regular', labelPosition: 'top' },
+						},
+						{
+							id: 'billing_last_name',
+							layout: { type: 'regular', labelPosition: 'top' },
+						},
+					],
+				},
+				{
+					id: 'billing_company',
+					layout: { type: 'regular', labelPosition: 'top' },
+				},
+				{
+					id: 'billing_country',
+					layout: { type: 'regular', labelPosition: 'top' },
+				},
+				{
+					id: 'billing_address_1',
+					layout: { type: 'regular', labelPosition: 'top' },
+				},
+				{
+					id: 'billing_address_2',
+					layout: { type: 'regular', labelPosition: 'top' },
+				},
+				{
+					id: '_city-state',
+					layout: { type: 'row' },
+					children: [
+						{
+							id: 'billing_city',
+							layout: { type: 'regular', labelPosition: 'top' },
+						},
+						{
+							id: 'billing_state',
+							layout: { type: 'regular', labelPosition: 'top' },
+						},
+					],
+				},
+				{
+					id: '_postcode-phone',
+					layout: { type: 'row' },
+					children: [
+						{
+							id: 'billing_postcode',
+							layout: { type: 'regular', labelPosition: 'top' },
+						},
+						{
+							id: 'billing_phone',
+							layout: { type: 'regular', labelPosition: 'top' },
+						},
+					],
+				},
+			],
+		},
+		{
+			id: 'customer-note',
+			layout: { type: 'regular', labelPosition: 'top' },
+		},
+	],
+};
+
+/**
+ * Nested DataForm for the customer card. Each panel commits its own
+ * changes through `/bookings/update` on Apply — independent of the
+ * page-header Save (which only flushes the booking note). Mirrors
+ * CIAB's `useCustomerDetailsForm` pattern.
+ */
+function BookingCustomerCard( { item } ) {
+	const { onRefresh } = useContext( BookingDetailContext );
+	const { createSuccessNotice, createErrorNotice } =
+		useDispatch( noticesStore );
+
+	const fields = useMemo( () => buildCustomerCardFields(), [] );
+
+	const handleChange = useCallback(
+		( updater ) => {
+			const merged =
+				typeof updater === 'function' ? updater( item ) : updater;
+			const billing = merged?.order?.billing;
+			if ( ! billing ) return;
+			apiFetch( {
+				path: REST_BASE + 'bookings/update',
+				method: 'POST',
+				data: { id: item.id, fields: { billing } },
+			} )
+				.then( () => {
+					createSuccessNotice(
+						__(
+							'Customer details updated.',
+							'woocommerce-bookings'
+						),
+						{ type: 'snackbar' }
+					);
+					onRefresh();
+				} )
+				.catch( ( err ) => {
+					createErrorNotice(
+						err?.message ||
+							__(
+								'Failed to update customer details.',
+								'woocommerce-bookings'
+							),
+						{ type: 'snackbar' }
+					);
+				} );
+		},
+		[ item, onRefresh, createSuccessNotice, createErrorNotice ]
+	);
+
 	return (
-		<div className="wc-bookings-dv-detail__customer-details">
-			{ c.name && (
-				<div className="wc-bookings-dv-detail__customer-details-row">
-					{ c.name }
-				</div>
-			) }
-			{ c.email && (
-				<div className="wc-bookings-dv-detail__customer-details-row">
-					<a href={ `mailto:${ c.email }` }>{ c.email }</a>
-				</div>
-			) }
-			{ c.phone && (
-				<div className="wc-bookings-dv-detail__customer-details-row">
-					{ c.phone }
-				</div>
-			) }
+		<div className="wc-bookings-dv-detail__customer-card">
+			<DataForm
+				data={ item }
+				fields={ fields }
+				form={ CUSTOMER_CARD_FORM }
+				onChange={ handleChange }
+			/>
 		</div>
 	);
 }
@@ -404,7 +768,7 @@ function BookingActionsButtons( { item } ) {
 			variant: 'minimal',
 			endpoint: null,
 			notImplementedMessage: __(
-				"Reschedule isn't wired up in this plugin yet.",
+				'Reschedule is coming soon.',
 				'woocommerce-bookings'
 			),
 		},
@@ -432,7 +796,12 @@ function BookingActionsButtons( { item } ) {
 
 	if ( actions.length === 0 ) return null;
 	return (
-		<Stack direction="row" justify="flex-end" gap="sm">
+		<Stack
+			className="wc-bookings-dv-detail__action-row"
+			direction="row"
+			justify="flex-end"
+			gap="sm"
+		>
 			{ actions.map( ( action ) => (
 				<Button
 					key={ action.id }
@@ -474,7 +843,7 @@ function BookingOrderActionsButtons( { item } ) {
 			variant: 'outline',
 			endpoint: null,
 			notImplementedMessage: __(
-				"Refund isn't wired up in this plugin yet.",
+				'Refund is coming soon.',
 				'woocommerce-bookings'
 			),
 		},
@@ -492,15 +861,24 @@ function BookingOrderActionsButtons( { item } ) {
 
 	if ( actions.length === 0 ) return null;
 	return (
-		<Stack direction="row" justify="flex-end" gap="sm">
+		<Stack
+			className="wc-bookings-dv-detail__action-row"
+			direction="row"
+			justify="flex-end"
+			gap="sm"
+		>
 			{ actions.map( ( action ) => {
 				if ( action.type === 'link' ) {
+					// @wordpress/ui Button wraps base-ui's Button which
+					// supports a `render` prop — pass an <a> so the
+					// button is a real anchor and the href actually
+					// navigates. Plain `href` on <button> is ignored.
 					return (
 						<Button
 							key={ action.id }
 							variant={ action.variant }
 							size="compact"
-							href={ action.href }
+							render={ <a href={ action.href } /> }
 						>
 							{ action.label }
 						</Button>
@@ -549,6 +927,28 @@ const VISIBILITY_OVERRIDES = {
  * • Appends runtime composite renderers (service info, date-time, customer
  *   details, payment breakdown, note, plus the two action button groups).
  */
+// Detect the bare em-dash placeholder some field renders fall back to
+// when there's no value (e.g. attendance status, payment status). On the
+// list view we keep them — empty cells read as ambiguous — but in the
+// card summaries they sit next to the chevron and read as noise, so we
+// strip them here. Matches CIAB's behavior.
+function stripEmDashRender( original ) {
+	if ( typeof original !== 'function' ) return original;
+	return ( props ) => {
+		const out = original( props );
+		if (
+			out &&
+			typeof out === 'object' &&
+			out.type === 'span' &&
+			! out.props?.className &&
+			out.props?.children === '—'
+		) {
+			return null;
+		}
+		return out;
+	};
+}
+
 function buildFormFields( bookingStatus ) {
 	const base = buildFields()
 		.filter(
@@ -562,9 +962,32 @@ function buildFormFields( bookingStatus ) {
 			const adapted = {
 				...f,
 				type: 'text',
-				readOnly: true,
+				// The booking note is editable so admins can update
+				// the private note inline; all other fields stay
+				// read-only on this detail screen.
+				readOnly: f.id !== 'note',
 				label: LABEL_OVERRIDES[ f.id ] ?? f.label,
+				render: stripEmDashRender( f.render ),
 			};
+			// Hide the attendance summary badge on future bookings —
+			// WC_Booking defaults the prop to `unattended` even before
+			// the booking happens, so the badge would misleadingly
+			// imply the customer didn't show up. Done detail-only so
+			// the list view keeps the same behavior as core.
+			if ( f.id === 'attendance_status' ) {
+				const originalRender = adapted.render;
+				adapted.render = ( props ) => {
+					if ( ! props.item?.is_past ) return null;
+					return originalRender( props );
+				};
+			}
+			// Same idea for customer — the list view wraps the name
+			// in a mailto link, but the card summary should be plain
+			// text to match CIAB.
+			if ( f.id === 'customer' ) {
+				adapted.render = ( { item } ) =>
+					item.customer?.name || null;
+			}
 			if ( VISIBILITY_OVERRIDES[ f.id ] ) {
 				adapted.isVisible = VISIBILITY_OVERRIDES[ f.id ];
 			}
@@ -588,6 +1011,51 @@ function buildFormFields( bookingStatus ) {
 			render: DateTimeRender,
 		},
 		{
+			// Plain-text "Resource" row that always renders, even when
+			// there's no resource assigned. The base `resource` field
+			// from buildFields has `elements` for filtering on the list
+			// view, which made DataForm hide the row when the booking's
+			// resource didn't match any element. This custom field
+			// side-steps that and renders an em-dash placeholder
+			// otherwise.
+			id: 'booking-resource',
+			type: 'text',
+			readOnly: true,
+			label: __( 'Resource', 'woocommerce-bookings' ),
+			getValue: ( { item } ) => item.product?.resource?.name || '—',
+			render: ( { item } ) => item.product?.resource?.name || '—',
+		},
+		{
+			// Per-type breakdown of person counts ("Adults: 2, Children: 1").
+			// REST returns `person_counts` as [{ key, value }, ...] matching
+			// CIAB's declared shape. Core only exposes a single sum
+			// (`num_of_persons`); we render the breakdown read-only here,
+			// mirroring `booking-resource`'s panel shape since CIAB has not
+			// shipped a renderer for this field.
+			id: 'booking-person-counts',
+			type: 'text',
+			readOnly: true,
+			label: __( 'Person(s)', 'woocommerce-bookings' ),
+			getValue: ( { item } ) => {
+				const counts = item.person_counts;
+				if ( ! counts || counts.length === 0 ) {
+					return '—';
+				}
+				return counts
+					.map( ( c ) => `${ c.key }: ${ c.value }` )
+					.join( ', ' );
+			},
+			render: ( { item } ) => {
+				const counts = item.person_counts;
+				if ( ! counts || counts.length === 0 ) {
+					return '—';
+				}
+				return counts
+					.map( ( c ) => `${ c.key }: ${ c.value }` )
+					.join( ', ' );
+			},
+		},
+		{
 			id: 'booking_payment_breakdown',
 			type: 'text',
 			readOnly: true,
@@ -599,14 +1067,16 @@ function buildFormFields( bookingStatus ) {
 			type: 'text',
 			readOnly: true,
 			label: __( 'Customer details', 'woocommerce-bookings' ),
-			render: BookingCustomerDetails,
+			render: BookingCustomerCard,
 		},
 		{
 			id: 'note',
 			type: 'text',
-			readOnly: true,
-			label: __( 'Note', 'woocommerce-bookings' ),
-			render: NoteRender,
+			// Editable — DataForm renders its built-in text input. Edits
+			// land in the parent's `pendingEdits` buffer; the header Save
+			// button flushes them through `bookings/update`.
+			readOnly: false,
+			label: __( 'Booking note', 'woocommerce-bookings' ),
 		},
 		{
 			id: 'booking-actions-button-group',
@@ -648,7 +1118,11 @@ const FORM = {
 					layout: { type: 'panel', labelPosition: 'top' },
 				},
 				{
-					id: 'resource',
+					id: 'booking-resource',
+					layout: { type: 'panel', labelPosition: 'top' },
+				},
+				{
+					id: 'booking-person-counts',
 					layout: { type: 'panel', labelPosition: 'top' },
 				},
 				{
@@ -664,7 +1138,7 @@ const FORM = {
 				type: 'card',
 				summary: [
 					'total',
-					{ id: 'status', visibility: 'always' },
+					{ id: 'payment_status', visibility: 'always' },
 				],
 			},
 			children: [
@@ -707,7 +1181,7 @@ const FORM = {
 			children: [
 				{
 					id: 'note',
-					layout: { type: 'regular', labelPosition: 'none' },
+					layout: { type: 'regular', labelPosition: 'top' },
 				},
 			],
 		},
@@ -755,41 +1229,204 @@ function useBookingDetail( bookingId, refreshToken ) {
 }
 
 // =============================================================================
-// Page-header Cancel (the only top-level entity action for now)
+// Page-header actions — Save (dirty buffer flush) + kebab (booking-level
+// entity actions). Mirrors CIAB's detail-page header.
 // =============================================================================
 
-function PageHeaderActions( { booking } ) {
+function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 	const { pending, run } = useBookingActionRunner( booking.id );
+	const { onRefresh } = useContext( BookingDetailContext );
+	const { createSuccessNotice } = useDispatch( noticesStore );
 	const can = booking.can || {};
-	if ( ! can.cancel ) return null;
+	const orderUrl = booking.order?.edit_url;
+	const busy = pending !== null || isSaving;
+	const [ isCancelOpen, setIsCancelOpen ] = useState( false );
+
+	const openCancelDialog = useCallback( () => setIsCancelOpen( true ), [] );
+
+	// AlertDialog.Root awaits this promise. Returning an `{ error }` keeps
+	// the dialog open and surfaces the message inline. On success we
+	// stay on the page — the booking refetches, the "Canceled" badge
+	// appears in the header, and the inline action buttons hide via the
+	// updated `can.*` flags. Mirrors CIAB.
+	const handleConfirmCancel = useCallback( async () => {
+		try {
+			await apiFetch( {
+				path: REST_BASE + 'bookings/cancel',
+				method: 'POST',
+				data: { ids: [ Number( booking.id ) ] },
+			} );
+			onRefresh();
+			createSuccessNotice(
+				__( 'Booking cancelled.', 'woocommerce-bookings' ),
+				{ type: 'snackbar' }
+			);
+		} catch ( err ) {
+			return {
+				error:
+					err?.message ||
+					__(
+						'The action could not be completed.',
+						'woocommerce-bookings'
+					),
+			};
+		}
+	}, [ booking.id, onRefresh, createSuccessNotice ] );
+
+	// Mirror CIAB: the kebab is the central, always-discoverable list of
+	// entity actions. It intentionally overlaps with the inline buttons on
+	// the Booking details / Payment cards. Gating uses the same `can.*`
+	// flags so a single source of truth drives both surfaces. Order
+	// matches CIAB's booking kebab.
+	const canReschedule =
+		booking.status !== 'cancelled' && booking.status !== 'complete';
+
+	const controls = [
+		can.cancel && {
+			title: __( 'Cancel', 'woocommerce-bookings' ),
+			onClick: openCancelDialog,
+			isDisabled: busy,
+		},
+		canReschedule && {
+			title: __( 'Reschedule', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'reschedule',
+					endpoint: null,
+					notImplementedMessage: __(
+						'Reschedule is coming soon.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
+		orderUrl && {
+			title: __( 'View order', 'woocommerce-bookings' ),
+			onClick: () => {
+				window.location.href = orderUrl;
+			},
+			isDisabled: busy,
+		},
+		!! booking.order && {
+			title: __( 'Refund', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'refund',
+					endpoint: null,
+					notImplementedMessage: __(
+						'Refund is coming soon.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
+		can.mark_paid && {
+			title: __( 'Mark as paid', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'mark-paid',
+					endpoint: 'bookings/mark-paid',
+					successMessage: __(
+						'Booking marked as paid.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
+		can.mark_attended && {
+			title: __( 'Mark as attended', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'mark-attended',
+					endpoint: 'bookings/mark-attended',
+					successMessage: __(
+						'Booking marked as attended.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
+		can.mark_unattended && {
+			title: __( 'Mark as unattended', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'mark-unattended',
+					endpoint: 'bookings/mark-unattended',
+					successMessage: __(
+						'Booking marked as unattended.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
+	].filter( Boolean );
+
+	const customerLabel = ( booking.customer?.name || '' ).trim();
+	const cancelDescription = booking.all_day
+		? sprintf(
+			// translators: 1: customer name, 2: product title, 3: date.
+			__(
+				'%1$s will no longer be able to attend "%2$s" on %3$s.',
+				'woocommerce-bookings'
+			),
+			customerLabel || __( 'The customer', 'woocommerce-bookings' ),
+			booking.product?.title || '',
+			booking.start_date_only_display || ''
+		)
+		: sprintf(
+			// translators: 1: customer name, 2: product title, 3: date, 4: time.
+			__(
+				'%1$s will no longer be able to attend "%2$s" on %3$s at %4$s.',
+				'woocommerce-bookings'
+			),
+			customerLabel || __( 'The customer', 'woocommerce-bookings' ),
+			booking.product?.title || '',
+			booking.start_date_only_display || '',
+			booking.start_time_display || ''
+		);
 
 	return (
-		<Button
-			size="compact"
-			variant="outline"
-			loading={ pending === 'cancel' }
-			disabled={ pending !== null }
-			onClick={ () => {
-				// eslint-disable-next-line no-alert -- intentional confirm for destructive action.
-				if (
-					! window.confirm(
-						__(
-							'Cancel this booking? This cannot be undone.',
+		<Stack direction="row" align="center" gap="sm">
+			<Button
+				size="compact"
+				disabled={ ! isDirty || isSaving }
+				loading={ isSaving }
+				onClick={ onSave }
+			>
+				{ __( 'Save', 'woocommerce-bookings' ) }
+			</Button>
+			{ controls.length > 0 && (
+				<DropdownMenu
+					icon={ moreVertical }
+					label={ __( 'More actions', 'woocommerce-bookings' ) }
+					controls={ controls }
+					popoverProps={ { placement: 'bottom-end' } }
+				/>
+			) }
+			<AlertDialog.Root
+				open={ isCancelOpen }
+				onOpenChange={ setIsCancelOpen }
+				onConfirm={ handleConfirmCancel }
+			>
+				<AlertDialog.Portal>
+					<AlertDialog.Popup
+						title={ __(
+							'Cancel this booking',
 							'woocommerce-bookings'
-						)
-					)
-				) {
-					return;
-				}
-				run( {
-					id: 'cancel',
-					endpoint: 'bookings/cancel',
-					redirectTo: LIST_URL,
-				} );
-			} }
-		>
-			{ __( 'Cancel booking', 'woocommerce-bookings' ) }
-		</Button>
+						) }
+						description={ cancelDescription }
+						confirmButtonText={ __(
+							'Yes, cancel booking',
+							'woocommerce-bookings'
+						) }
+						cancelButtonText={ __(
+							'No, keep it',
+							'woocommerce-bookings'
+						) }
+					/>
+				</AlertDialog.Portal>
+			</AlertDialog.Root>
+		</Stack>
 	);
 }
 
@@ -815,6 +1452,118 @@ export default function BookingDetail( { bookingId } ) {
 		() => buildFormFields( booking?.status ),
 		[ booking?.status ]
 	);
+
+	// Filter optional rows out of the details card when they have no data
+	// to display. `booking-resource` and `booking-person-counts` are both
+	// product-level features that may not apply to a given booking — when
+	// they don't, hide the row entirely rather than show a placeholder.
+	const formForBooking = useMemo( () => {
+		if ( ! booking ) return FORM;
+		const hasResource = !! booking.product?.resource?.name;
+		const hasPersonCounts =
+			Array.isArray( booking.person_counts ) &&
+			booking.person_counts.length > 0;
+		if ( hasResource && hasPersonCounts ) return FORM;
+		return {
+			...FORM,
+			fields: FORM.fields.map( ( card ) => {
+				if ( card.id !== 'details-card' ) return card;
+				return {
+					...card,
+					children: card.children.filter( ( child ) => {
+						if ( child.id === 'booking-resource' ) {
+							return hasResource;
+						}
+						if ( child.id === 'booking-person-counts' ) {
+							return hasPersonCounts;
+						}
+						return true;
+					} ),
+				};
+			} ),
+		};
+	}, [ booking?.product?.resource?.name, booking?.person_counts ] );
+
+	// Dirty buffer for editable fields. Edits don't hit the network
+	// until the user presses Save in the header — see `saveEdits`.
+	// `pendingEdits` is a partial of the booking shape; the form is
+	// rendered with `{ ...booking, ...pendingEdits }` so unsaved
+	// changes survive background re-fetches and the textarea stays in
+	// sync with what the user typed.
+	const [ pendingEdits, setPendingEdits ] = useState( {} );
+	const [ isSaving, setIsSaving ] = useState( false );
+	const { createSuccessNotice, createErrorNotice } =
+		useDispatch( noticesStore );
+
+	useEffect( () => {
+		// Reset the buffer when navigating to a different booking.
+		setPendingEdits( {} );
+	}, [ booking?.id ] );
+
+	const handleFormChange = useCallback(
+		( updater ) => {
+			const merged = { ...( booking || {} ), ...pendingEdits };
+			const next =
+				typeof updater === 'function' ? updater( merged ) : updater;
+			if ( ! next ) return;
+			// Pick out only the fields that actually changed vs the
+			// booking source of truth.
+			const diff = {};
+			if ( next.note !== undefined && next.note !== ( booking?.note ?? '' ) ) {
+				diff.note = next.note;
+			}
+			setPendingEdits( ( prev ) => ( { ...prev, ...diff } ) );
+		},
+		[ booking, pendingEdits ]
+	);
+
+	const dataForForm = useMemo( () => {
+		if ( ! booking ) return null;
+		return Object.keys( pendingEdits ).length === 0
+			? booking
+			: { ...booking, ...pendingEdits };
+	}, [ booking, pendingEdits ] );
+
+	const isDirty = Object.keys( pendingEdits ).length > 0;
+
+	const saveEdits = useCallback( () => {
+		if ( ! isDirty || isSaving ) return;
+		setIsSaving( true );
+		apiFetch( {
+			path: REST_BASE + 'bookings/update',
+			method: 'POST',
+			data: { id: bookingId, fields: pendingEdits },
+		} )
+			.then( () => {
+				setPendingEdits( {} );
+				createSuccessNotice(
+					__( 'Booking updated.', 'woocommerce-bookings' ),
+					{ type: 'snackbar' }
+				);
+				onRefresh();
+			} )
+			.catch( ( err ) => {
+				createErrorNotice(
+					err?.message ||
+						__(
+							'Failed to update booking.',
+							'woocommerce-bookings'
+						),
+					{ type: 'snackbar' }
+				);
+			} )
+			.finally( () => {
+				setIsSaving( false );
+			} );
+	}, [
+		bookingId,
+		pendingEdits,
+		isDirty,
+		isSaving,
+		onRefresh,
+		createSuccessNotice,
+		createErrorNotice,
+	] );
 
 	if ( isLoading && ! booking ) {
 		return (
@@ -854,14 +1603,21 @@ export default function BookingDetail( { bookingId } ) {
 					<BookingBreadcrumbs bookingId={ booking.id } />
 				}
 				badges={ <HeaderBadges booking={ booking } /> }
-				actions={ <PageHeaderActions booking={ booking } /> }
+				actions={
+					<BookingHeaderActions
+						booking={ booking }
+						isDirty={ isDirty }
+						isSaving={ isSaving }
+						onSave={ saveEdits }
+					/>
+				}
 			>
 				<div className="wc-bookings-dv-detail">
 					<DataForm
-						data={ booking }
+						data={ dataForForm }
 						fields={ formFields }
-						form={ FORM }
-						onChange={ () => {} }
+						form={ formForBooking }
+						onChange={ handleFormChange }
 					/>
 				</div>
 			</Page>

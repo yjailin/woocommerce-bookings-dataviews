@@ -2,23 +2,40 @@ import { __ } from '@wordpress/i18n';
 import { createElement as h } from '@wordpress/element';
 import { Badge, Link } from '@wordpress/ui';
 
-// Map raw booking status → payment label/intent for the Payment column.
-const PAYMENT_MAP = {
-	unpaid: { label: __( 'Unpaid', 'woocommerce-bookings' ), intent: 'low' },
-	'pending-confirmation': { label: __( 'Unpaid', 'woocommerce-bookings' ), intent: 'low' },
-	confirmed: { label: __( 'Unpaid', 'woocommerce-bookings' ), intent: 'low' },
+// Payment is derived from the underlying order, not the booking status.
+// Returns one of: null (no order → "N/A"), 'cancelled' (cancelled order
+// that was never paid → "—"), or 'paid' / 'unpaid' / 'refunded' (badges).
+// Cancelled + previously paid stays "Paid" because the money is still
+// owed back to the customer until a refund is issued.
+export function paymentStateFor( item ) {
+	if ( ! item.order ) {
+		return null;
+	}
+	const status = item.order.status;
+	if ( status === 'refunded' ) {
+		return 'refunded';
+	}
+	if ( status === 'cancelled' ) {
+		return item.order.date_paid ? 'paid' : 'cancelled';
+	}
+	if ( status === 'processing' || status === 'completed' ) {
+		return 'paid';
+	}
+	return 'unpaid';
+}
+
+export const PAYMENT_MAP = {
 	paid: { label: __( 'Paid', 'woocommerce-bookings' ), intent: 'none' },
-	complete: { label: __( 'Paid', 'woocommerce-bookings' ), intent: 'none' },
+	unpaid: { label: __( 'Unpaid', 'woocommerce-bookings' ), intent: 'low' },
 	refunded: { label: __( 'Refunded', 'woocommerce-bookings' ), intent: 'none' },
 };
 
-const STATUS_OPTIONS = [
-	{ value: 'unpaid', label: __( 'Unpaid', 'woocommerce-bookings' ) },
-	{ value: 'pending-confirmation', label: __( 'Pending Confirmation', 'woocommerce-bookings' ) },
-	{ value: 'confirmed', label: __( 'Confirmed', 'woocommerce-bookings' ) },
+// Filter options mirror the badges the Payment column can actually display.
+const PAYMENT_OPTIONS = [
 	{ value: 'paid', label: __( 'Paid', 'woocommerce-bookings' ) },
-	{ value: 'cancelled', label: __( 'Cancelled', 'woocommerce-bookings' ) },
-	{ value: 'complete', label: __( 'Complete', 'woocommerce-bookings' ) },
+	{ value: 'unpaid', label: __( 'Unpaid', 'woocommerce-bookings' ) },
+	{ value: 'refunded', label: __( 'Refunded', 'woocommerce-bookings' ) },
+	{ value: 'no_order', label: __( 'No order', 'woocommerce-bookings' ) },
 ];
 
 const ATTENDANCE_OPTIONS = [
@@ -72,20 +89,24 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 				if ( item.attendance_status === 'unattended' ) {
 					return h( Badge, { intent: 'draft' }, __( 'Unattended', 'woocommerce-bookings' ) );
 				}
-				if ( item.attendance_status === 'attended' || item.is_past ) {
+				if ( item.attendance_status === 'attended' ) {
 					return h( Badge, { intent: 'none' }, __( 'Attended', 'woocommerce-bookings' ) );
 				}
 				return h( 'span', null, '—' );
 			},
 		},
 		{
-			id: 'status',
+			id: 'payment_status',
 			label: __( 'Payment', 'woocommerce-bookings' ),
-			elements: STATUS_OPTIONS,
+			elements: PAYMENT_OPTIONS,
 			filterBy: { operators: [ 'is' ] },
-			getValue: ( { item } ) => item.status,
+			getValue: ( { item } ) => paymentStateFor( item ) || '',
 			render: ( { item } ) => {
-				const map = PAYMENT_MAP[ item.status ];
+				const state = paymentStateFor( item );
+				if ( ! state ) {
+					return h( 'span', null, __( 'N/A', 'woocommerce-bookings' ) );
+				}
+				const map = PAYMENT_MAP[ state ];
 				if ( ! map ) return h( 'span', null, '—' );
 				return h( Badge, { intent: map.intent }, map.label );
 			},
@@ -114,6 +135,7 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 		{
 			id: 'customer',
 			label: __( 'Customer', 'woocommerce-bookings' ),
+			enableSorting: true,
 			getValue: ( { item } ) => item.customer?.name || '',
 			render: ( { item } ) => {
 				const name = item.customer?.name || '—';
@@ -150,7 +172,7 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 							item.product.resource.name
 					  )
 					: h( 'span', null, '—' ),
-			enableSorting: false,
+			enableSorting: true,
 		},
 		{
 			id: 'start_date',

@@ -124,6 +124,13 @@ class WC_Bookings_DataViews_Page {
 			return;
 		}
 
+		// Suppress the WooCommerce "If you like ★★★★★" admin footer
+		// on our pages. WC adds it via `admin_footer_text` and replaces
+		// the WP version string via `update_footer` at priority 11; we
+		// just unset both for this hook.
+		add_filter( 'admin_footer_text', '__return_empty_string', 99 );
+		add_filter( 'update_footer', '__return_empty_string', 99 );
+
 		$asset_file = WC_BOOKINGS_DATAVIEWS_PATH . 'build/index.asset.php';
 		if ( ! file_exists( $asset_file ) ) {
 			wp_die( esc_html__( 'Bookings DataViews build is missing. Run `npm install && npm run build` in the plugin folder.', 'woocommerce-bookings' ) );

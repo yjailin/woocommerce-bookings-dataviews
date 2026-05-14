@@ -22,6 +22,8 @@
     "@tanstack/react-router": "^1.120.5",
     "@wordpress/admin-ui": "^2.0.0",
     "@wordpress/dataviews": "^14.2.0",
+    "@wordpress/preferences": "^4.46.0",
+    "@wordpress/preferences-persistence": "^2.46.0",
     "@wordpress/ui": "^0.12.0"
   },
   "engines": {
