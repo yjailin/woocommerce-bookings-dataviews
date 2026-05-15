@@ -13,6 +13,19 @@ body.wp-admin {
 @import "@wordpress/theme/src/prebuilt/css/design-tokens.css";
 @import "@wordpress/dataviews/build-style/style.css";
 
+/* Cell-level link: matches the visual treatment DataViews uses for
+   the title field (`.dataviews-title-field--clickable`) — near-black,
+   underlined, theme color on hover — so secondary cross-entity links
+   (e.g. Order #) read as the same kind of affordance. */
+.bdv-cell-link {
+	color: #2f2f2f;
+	text-decoration: underline;
+
+	&:hover {
+		color: var( --wp-admin-theme-color, #007cba );
+	}
+}
+
 /* @wordpress/ui's dialog / popover / alert-dialog CSS pulls z-index from
    `--wp-ui-dialog-z-index` / `--wp-ui-popover-z-index` and falls back to
    `initial` (auto) when unset. In WP admin context that places them
@@ -62,13 +75,6 @@ body.wp-admin {
 		   sits visually centered without changing the row's total height. */
 		padding-top: 8px;
 		padding-bottom: 8px;
-	}
-
-	.dataviews-view-table__actions-column--sticky {
-		position: static;
-	}
-	.dataviews-view-table__actions-column--stuck::after {
-		display: none;
 	}
 
 	// Let the table grow past the container width when many optional

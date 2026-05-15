@@ -266,7 +266,7 @@ class WC_Bookings_DataViews_REST {
 			} catch ( Exception $e ) {
 				continue;
 			}
-			if ( in_array( $booking->get_status(), array( 'paid', 'complete', 'cancelled', 'refunded' ), true ) ) {
+			if ( in_array( $booking->get_status(), array( 'paid', 'cancelled', 'refunded' ), true ) ) {
 				continue;
 			}
 			$booking->update_status( 'paid' );
@@ -596,14 +596,20 @@ class WC_Bookings_DataViews_REST {
 		}
 
 		// Capability flags that drive button visibility on the client.
+		// Rules mirror the list-view isEligible logic in src/app.js,
+		// derived from CIAB's row-action behavior:
+		//   cancel:           allowed unless paid / completed / refunded / cancelled
+		//   mark_paid:        allowed unless already paid / refunded / cancelled
+		//                     ('complete' bookings can still need a missing payment recorded)
+		//   mark_attended:    allowed for any non-cancelled booking that
+		//                     isn't already marked attended (past or future)
+		//   mark_unattended:  allowed for any non-cancelled booking that
+		//                     is currently marked attended
 		$base['can'] = array(
-			'cancel'           => ! in_array( $booking->get_status(), array( 'cancelled', 'complete' ), true ),
-			'mark_paid'        => ! in_array( $booking->get_status(), array( 'paid', 'complete', 'cancelled', 'refunded' ), true ),
-			// Symmetric: only offer the flip when there's a concrete
-			// opposite state to flip from. Null/missing attendance →
-			// neither action is meaningful.
-			'mark_attended'    => ! empty( $base['is_past'] ) && 'unattended' === $base['attendance_status'],
-			'mark_unattended'  => ! empty( $base['is_past'] ) && 'attended' === $base['attendance_status'],
+			'cancel'           => ! in_array( $booking->get_status(), array( 'cancelled', 'paid', 'complete', 'refunded' ), true ),
+			'mark_paid'        => ! in_array( $booking->get_status(), array( 'paid', 'cancelled', 'refunded' ), true ),
+			'mark_attended'    => 'cancelled' !== $booking->get_status() && 'attended' !== $base['attendance_status'],
+			'mark_unattended'  => 'cancelled' !== $booking->get_status() && 'attended' === $base['attendance_status'],
 			'view_order'       => ! empty( $base['order'] ),
 		);
 
@@ -649,7 +655,7 @@ class WC_Bookings_DataViews_REST {
 			} catch ( Exception $e ) {
 				continue;
 			}
-			if ( 'cancelled' === $booking->get_status() ) {
+			if ( in_array( $booking->get_status(), array( 'cancelled', 'paid', 'complete', 'refunded' ), true ) ) {
 				continue;
 			}
 			$booking->update_status( 'cancelled' );
@@ -1078,42 +1084,42 @@ class WC_Bookings_DataViews_REST {
 			);
 		}
 
-		// Attendance filter. The UI shows past bookings as "Attended"
-		// unless explicitly flagged unattended, so the filter mirrors
-		// that visual rule rather than just doing a literal meta match.
+		// Attendance filter. Mirrors the badge rule in fields.js exactly:
+		//   "Attended"   = `_booking_attendance_status` is explicitly 'attended'
+		//   "Unattended" = anything else (missing meta OR a value !== 'attended')
+		// Past-vs-future no longer matters — every non-cancelled booking
+		// shows one of the two badges, so the filter follows suit.
+		// Cancelled bookings show "—" (not a badge), so they're excluded
+		// from both filter results.
+		if ( 'attended' === $attendance || 'unattended' === $attendance ) {
+			// 'any' in WP_Query expands to every status where
+			// `exclude_from_search` is false. We replicate that set so the
+			// attendance filter doesn't accidentally widen visibility, then
+			// subtract `cancelled` (those rows show "—", not a badge).
+			if ( 'any' === $args['post_status'] ) {
+				$any_visible = get_post_stati( array( 'exclude_from_search' => false ), 'names' );
+				$args['post_status'] = array_values( array_diff( $any_visible, array( 'cancelled' ) ) );
+			} elseif ( is_array( $args['post_status'] ) ) {
+				$args['post_status'] = array_values( array_diff( $args['post_status'], array( 'cancelled' ) ) );
+			}
+		}
 		if ( 'attended' === $attendance ) {
-			$now_ymd = ( new DateTimeImmutable( 'now', wp_timezone() ) )->format( 'YmdHis' );
 			$meta_query[] = array(
-				'relation' => 'OR',
-				array(
-					'key'   => '_booking_attendance_status',
-					'value' => 'attended',
-				),
-				array(
-					'relation' => 'AND',
-					array(
-						'key'     => '_booking_end',
-						'value'   => $now_ymd,
-						'compare' => '<',
-					),
-					array(
-						'relation' => 'OR',
-						array(
-							'key'     => '_booking_attendance_status',
-							'compare' => 'NOT EXISTS',
-						),
-						array(
-							'key'     => '_booking_attendance_status',
-							'value'   => 'unattended',
-							'compare' => '!=',
-						),
-					),
-				),
+				'key'   => '_booking_attendance_status',
+				'value' => 'attended',
 			);
 		} elseif ( 'unattended' === $attendance ) {
 			$meta_query[] = array(
-				'key'   => '_booking_attendance_status',
-				'value' => 'unattended',
+				'relation' => 'OR',
+				array(
+					'key'     => '_booking_attendance_status',
+					'compare' => 'NOT EXISTS',
+				),
+				array(
+					'key'     => '_booking_attendance_status',
+					'value'   => 'attended',
+					'compare' => '!=',
+				),
 			);
 		}
 

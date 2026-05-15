@@ -1,6 +1,6 @@
 import { __ } from '@wordpress/i18n';
 import { createElement as h } from '@wordpress/element';
-import { Badge, Link } from '@wordpress/ui';
+import { Badge } from '@wordpress/ui';
 
 // Payment is derived from the underlying order, not the booking status.
 // Returns one of: null (no order → "N/A"), 'cancelled' (cancelled order
@@ -35,7 +35,6 @@ const PAYMENT_OPTIONS = [
 	{ value: 'paid', label: __( 'Paid', 'woocommerce-bookings' ) },
 	{ value: 'unpaid', label: __( 'Unpaid', 'woocommerce-bookings' ) },
 	{ value: 'refunded', label: __( 'Refunded', 'woocommerce-bookings' ) },
-	{ value: 'no_order', label: __( 'No order', 'woocommerce-bookings' ) },
 ];
 
 const ATTENDANCE_OPTIONS = [
@@ -55,6 +54,7 @@ const DATE_PRESETS = [
 
 export function buildFields( { products = [], resources = [] } = {} ) {
 	return [
+		// Identity
 		{
 			id: 'id',
 			label: __( 'Booking #', 'woocommerce-bookings' ),
@@ -68,7 +68,16 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 		{
 			id: 'booking_status',
 			label: __( 'Status', 'woocommerce-bookings' ),
+			enableSorting: false,
+			elements: [
+				{ value: 'pending-confirmation', label: __( 'Pending', 'woocommerce-bookings' ) },
+				{ value: 'cancelled', label: __( 'Canceled', 'woocommerce-bookings' ) },
+			],
+			filterBy: { operators: [ 'is' ] },
 			getValue: ( { item } ) => item.status,
+			// Only render a badge for non-default booking states. Active
+			// bookings (confirmed/paid/complete/etc.) leave the cell empty
+			// — no point showing the default on every row.
 			render: ( { item } ) => {
 				if ( item.status === 'cancelled' ) {
 					return h( Badge, { intent: 'informational' }, __( 'Canceled', 'woocommerce-bookings' ) );
@@ -76,52 +85,27 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 				if ( item.status === 'pending-confirmation' ) {
 					return h( Badge, { intent: 'low' }, __( 'Pending', 'woocommerce-bookings' ) );
 				}
-				return h( Badge, { intent: 'stable' }, __( 'Confirmed', 'woocommerce-bookings' ) );
+				return null;
 			},
 		},
+		// Who
 		{
-			id: 'attendance_status',
-			label: __( 'Attendance', 'woocommerce-bookings' ),
-			elements: ATTENDANCE_OPTIONS,
+			id: 'resource',
+			label: __( 'Resource', 'woocommerce-bookings' ),
+			elements: resources,
 			filterBy: { operators: [ 'is' ] },
-			getValue: ( { item } ) => item.attendance_status || '',
-			render: ( { item } ) => {
-				if ( item.attendance_status === 'unattended' ) {
-					return h( Badge, { intent: 'draft' }, __( 'Unattended', 'woocommerce-bookings' ) );
-				}
-				if ( item.attendance_status === 'attended' ) {
-					return h( Badge, { intent: 'none' }, __( 'Attended', 'woocommerce-bookings' ) );
-				}
-				return h( 'span', null, '—' );
-			},
-		},
-		{
-			id: 'payment_status',
-			label: __( 'Payment', 'woocommerce-bookings' ),
-			elements: PAYMENT_OPTIONS,
-			filterBy: { operators: [ 'is' ] },
-			getValue: ( { item } ) => paymentStateFor( item ) || '',
-			render: ( { item } ) => {
-				const state = paymentStateFor( item );
-				if ( ! state ) {
-					return h( 'span', null, __( 'N/A', 'woocommerce-bookings' ) );
-				}
-				const map = PAYMENT_MAP[ state ];
-				if ( ! map ) return h( 'span', null, '—' );
-				return h( Badge, { intent: map.intent }, map.label );
-			},
-		},
-		{
-			id: 'product',
-			label: __( 'Booked Product', 'woocommerce-bookings' ),
-			enableSorting: true,
-			elements: products,
-			filterBy: { operators: [ 'is' ] },
-			getValue: ( { item } ) => item.product?.id || '',
+			getValue: ( { item } ) => item.product?.resource?.id || '',
 			render: ( { item } ) =>
-				item.product
-					? h( Link, { href: item.product.edit_url }, item.product.title )
-					: h( 'span', null, '—' ),
+				h( 'span', null, item.product?.resource ? item.product.resource.name : '—' ),
+			enableSorting: true,
+		},
+		{
+			id: 'customer',
+			label: __( 'Customer', 'woocommerce-bookings' ),
+			enableSorting: true,
+			getValue: ( { item } ) => item.customer?.name || '',
+			render: ( { item } ) =>
+				h( 'span', null, item.customer?.name || '—' ),
 		},
 		{
 			id: 'num_of_persons',
@@ -132,48 +116,7 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 					? h( 'span', null, '—' )
 					: h( 'span', null, String( item.num_of_persons ) ),
 		},
-		{
-			id: 'customer',
-			label: __( 'Customer', 'woocommerce-bookings' ),
-			enableSorting: true,
-			getValue: ( { item } ) => item.customer?.name || '',
-			render: ( { item } ) => {
-				const name = item.customer?.name || '—';
-				if ( item.customer?.email ) {
-					return h(
-						Link,
-						{ href: `mailto:${ item.customer.email }` },
-						name
-					);
-				}
-				return h( 'span', null, name );
-			},
-		},
-		{
-			id: 'order',
-			label: __( 'Order', 'woocommerce-bookings' ),
-			getValue: ( { item } ) => item.order?.number || '',
-			render: ( { item } ) =>
-				item.order
-					? h( Link, { href: item.order.edit_url }, `#${ item.order.number }` )
-					: h( 'span', null, '—' ),
-		},
-		{
-			id: 'resource',
-			label: __( 'Resource', 'woocommerce-bookings' ),
-			elements: resources,
-			filterBy: { operators: [ 'is' ] },
-			getValue: ( { item } ) => item.product?.resource?.id || '',
-			render: ( { item } ) =>
-				item.product?.resource
-					? h(
-							Link,
-							{ href: item.product.resource.edit_url },
-							item.product.resource.name
-					  )
-					: h( 'span', null, '—' ),
-			enableSorting: true,
-		},
+		// When
 		{
 			id: 'start_date',
 			label: __( 'Date and time', 'woocommerce-bookings' ),
@@ -184,13 +127,6 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 			render: ( { item } ) => h( 'span', null, item.start_date ),
 		},
 		{
-			id: 'total',
-			label: __( 'Total', 'woocommerce-bookings' ),
-			enableSorting: true,
-			getValue: ( { item } ) => item.total ?? 0,
-			render: ( { item } ) => h( 'span', null, item.total_display || '—' ),
-		},
-		{
 			id: 'end_date',
 			label: __( 'End Date', 'woocommerce-bookings' ),
 			enableSorting: true,
@@ -198,6 +134,72 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 			filterBy: { operators: [ 'is' ] },
 			getValue: ( { item } ) => item.end_date,
 			render: ( { item } ) => h( 'span', null, item.end_date ),
+		},
+		// State / financial
+		{
+			id: 'attendance_status',
+			label: __( 'Attendance', 'woocommerce-bookings' ),
+			elements: ATTENDANCE_OPTIONS,
+			filterBy: { operators: [ 'is' ] },
+			getValue: ( { item } ) => item.attendance_status || 'unattended',
+			// Mirror CIAB: every non-cancelled booking shows an attendance
+			// badge — "Attended" once explicitly marked, "Unattended" by
+			// default (including for future bookings). Cancelled bookings
+			// render as "—" since attendance isn't meaningful for them.
+			render: ( { item } ) => {
+				if ( item.status === 'cancelled' ) {
+					return h( 'span', null, '—' );
+				}
+				if ( item.attendance_status === 'attended' ) {
+					return h( Badge, { intent: 'none' }, __( 'Attended', 'woocommerce-bookings' ) );
+				}
+				return h( Badge, { intent: 'draft' }, __( 'Unattended', 'woocommerce-bookings' ) );
+			},
+		},
+		{
+			id: 'payment_status',
+			label: __( 'Payment', 'woocommerce-bookings' ),
+			enableSorting: false,
+			elements: PAYMENT_OPTIONS,
+			filterBy: { operators: [ 'is' ] },
+			getValue: ( { item } ) => paymentStateFor( item ) || '',
+			render: ( { item } ) => {
+				const state = paymentStateFor( item );
+				const map = state ? PAYMENT_MAP[ state ] : null;
+				if ( ! map ) return h( 'span', null, '—' );
+				return h( Badge, { intent: map.intent }, map.label );
+			},
+		},
+		{
+			id: 'order',
+			label: __( 'Order', 'woocommerce-bookings' ),
+			getValue: ( { item } ) => item.order?.number || '',
+			render: ( { item } ) =>
+				item.order
+					? h(
+							'a',
+							{ href: item.order.edit_url, className: 'bdv-cell-link' },
+							`#${ item.order.number }`
+					  )
+					: h( 'span', null, '—' ),
+		},
+		{
+			id: 'total',
+			label: __( 'Total', 'woocommerce-bookings' ),
+			enableSorting: true,
+			getValue: ( { item } ) => item.total ?? 0,
+			render: ( { item } ) => h( 'span', null, item.total_display || '—' ),
+		},
+		// What
+		{
+			id: 'product',
+			label: __( 'Booked Product', 'woocommerce-bookings' ),
+			enableSorting: true,
+			elements: products,
+			filterBy: { operators: [ 'is' ] },
+			getValue: ( { item } ) => item.product?.id || '',
+			render: ( { item } ) =>
+				h( 'span', null, item.product ? item.product.title : '—' ),
 		},
 	];
 }

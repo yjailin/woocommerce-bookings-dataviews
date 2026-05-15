@@ -101,15 +101,6 @@ function HeaderBadges( { booking } ) {
 	const isCancelled = booking.status === 'cancelled';
 	const pBadge = getPaymentBadge( booking );
 
-	// Attendance only makes sense once the booking has happened. The
-	// core WC_Booking prop defaults to `unattended` for every booking,
-	// so this is what hides the misleading default for future bookings
-	// without changing the underlying data the list view shows.
-	const hasAttendance =
-		booking.is_past &&
-		( booking.attendance_status === 'attended' ||
-			booking.attendance_status === 'unattended' );
-
 	return (
 		<>
 			{ isCancelled ? (
@@ -117,7 +108,6 @@ function HeaderBadges( { booking } ) {
 					{ __( 'Canceled', 'woocommerce-bookings' ) }
 				</Badge>
 			) : (
-				hasAttendance &&
 				ATTENDANCE_FIELD?.render && (
 					<ATTENDANCE_FIELD.render
 						item={ booking }
@@ -165,7 +155,8 @@ function BookingBreadcrumbs( { bookingId } ) {
 				},
 				{
 					label: sprintf(
-						__( 'Booking #%d', 'woocommerce-bookings' ),
+						/* translators: %d: booking ID */
+						__( '#%d', 'woocommerce-bookings' ),
 						bookingId
 					),
 				},
@@ -913,8 +904,6 @@ const LABEL_OVERRIDES = {
 // Per-field visibility overrides applied during the list-field adaptation
 // step. DataForm honors `isVisible` to skip the field entirely.
 const VISIBILITY_OVERRIDES = {
-	attendance_status: ( item ) =>
-		!! item.attendance_status || !! item.is_past,
 	resource: ( item ) => !! item.product?.resource,
 };
 
@@ -969,18 +958,6 @@ function buildFormFields( bookingStatus ) {
 				label: LABEL_OVERRIDES[ f.id ] ?? f.label,
 				render: stripEmDashRender( f.render ),
 			};
-			// Hide the attendance summary badge on future bookings —
-			// WC_Booking defaults the prop to `unattended` even before
-			// the booking happens, so the badge would misleadingly
-			// imply the customer didn't show up. Done detail-only so
-			// the list view keeps the same behavior as core.
-			if ( f.id === 'attendance_status' ) {
-				const originalRender = adapted.render;
-				adapted.render = ( props ) => {
-					if ( ! props.item?.is_past ) return null;
-					return originalRender( props );
-				};
-			}
 			// Same idea for customer — the list view wraps the name
 			// in a mailto link, but the card summary should be plain
 			// text to match CIAB.

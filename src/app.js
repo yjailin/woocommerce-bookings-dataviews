@@ -3,7 +3,7 @@ import { DataViews } from '@wordpress/dataviews';
 import apiFetch from '@wordpress/api-fetch';
 import { addQueryArgs } from '@wordpress/url';
 import { __ } from '@wordpress/i18n';
-import { Tabs, Link } from '@wordpress/ui';
+import { Tabs } from '@wordpress/ui';
 import { seen } from '@wordpress/icons';
 import { dispatch, select, useDispatch, useSelect } from '@wordpress/data';
 import { store as noticesStore } from '@wordpress/notices';
@@ -38,6 +38,24 @@ const TAB_DEFAULT_SORT = {
 	all:      { field: 'start_date', direction: 'desc' },
 };
 
+// Canonical column order, identity → who → when → state/financial → what.
+// Must stay in sync with the order of entries in `buildFields()` in fields.js.
+// `id` is the title field (rendered separately via renderItemLink) and is
+// not in this list.
+const CANONICAL_FIELD_ORDER = [
+	'booking_status',
+	'resource',
+	'customer',
+	'num_of_persons',
+	'start_date',
+	'end_date',
+	'attendance_status',
+	'payment_status',
+	'order',
+	'total',
+	'product',
+];
+
 const DEFAULTS = {
 	type: 'table',
 	perPage: 20,
@@ -45,20 +63,19 @@ const DEFAULTS = {
 	search: '',
 	filters: [],
 	sort: { field: 'start_date', direction: 'asc' },
-	// Column order after the title field (Booking #):
-	// Date and time, Booked Product, Resources, Persons, Customer, Status, Attendance, Payment, Total.
-	// `id` is the title field (rendered separately via renderItemLink),
-	// so it must NOT also appear in this list.
+	// Default visible columns. `end_date` and `order` are hidden by default
+	// but kept adjacent to their pair (start_date / payment_status) in
+	// `CANONICAL_FIELD_ORDER` so they land in the right place when enabled.
 	fields: [
-		'start_date',
-		'product',
-		'resource',
-		'num_of_persons',
-		'customer',
 		'booking_status',
+		'resource',
+		'customer',
+		'num_of_persons',
+		'start_date',
 		'attendance_status',
 		'payment_status',
 		'total',
+		'product',
 	],
 	titleField: 'id',
 	layout: {
@@ -71,6 +88,41 @@ const DEFAULTS = {
 		},
 	},
 };
+
+// When DataViews toggles a hidden column on, it appends the new id to the
+// end of `view.fields`. Re-insert any newly-added field at its canonical
+// position so End Date lands next to Date, Order next to Payment, etc.
+// User-initiated drag-reorders are preserved: when the field set is
+// unchanged (no additions), we leave the array as-is.
+function reconcileFieldsOrder( previousFields, nextFields ) {
+	if ( ! Array.isArray( previousFields ) || ! Array.isArray( nextFields ) ) {
+		return nextFields;
+	}
+	const prev = new Set( previousFields );
+	const added = nextFields.filter( ( f ) => ! prev.has( f ) );
+	if ( added.length === 0 ) {
+		return nextFields;
+	}
+	const preserved = nextFields.filter( ( f ) => prev.has( f ) );
+	const result = [ ...preserved ];
+	for ( const newField of added ) {
+		const canonicalPos = CANONICAL_FIELD_ORDER.indexOf( newField );
+		if ( canonicalPos === -1 ) {
+			result.push( newField );
+			continue;
+		}
+		let insertAt = result.length;
+		for ( let i = 0; i < result.length; i++ ) {
+			const existingPos = CANONICAL_FIELD_ORDER.indexOf( result[ i ] );
+			if ( existingPos > canonicalPos ) {
+				insertAt = i;
+				break;
+			}
+		}
+		result.splice( insertAt, 0, newField );
+	}
+	return result;
+}
 
 // setDefaults is sync (first useSelect read returns DEFAULTS); setPersistenceLayer
 // is async — App awaits the promise before fetching, so we fetch with the persisted
@@ -110,6 +162,8 @@ function buildParams( view, tab ) {
 	}
 	const paymentStatus = firstFilterValue( view.filters, 'payment_status' );
 	if ( paymentStatus ) params.payment_status = paymentStatus;
+	const bookingStatus = firstFilterValue( view.filters, 'booking_status' );
+	if ( bookingStatus ) params.status = bookingStatus;
 	const product = firstFilterValue( view.filters, 'product' );
 	if ( product ) params.product = product;
 	const resource = firstFilterValue( view.filters, 'resource' );
@@ -150,14 +204,18 @@ export default function App() {
 
 	const setView = useCallback(
 		( nextOrUpdater ) => {
-			if ( typeof nextOrUpdater === 'function' ) {
-				const current =
-					select( preferencesStore ).get( PREFS_SCOPE, VIEW_PREF ) ||
-					DEFAULTS;
-				setPreference( PREFS_SCOPE, VIEW_PREF, nextOrUpdater( current ) );
-			} else {
-				setPreference( PREFS_SCOPE, VIEW_PREF, nextOrUpdater );
-			}
+			const current =
+				select( preferencesStore ).get( PREFS_SCOPE, VIEW_PREF ) ||
+				DEFAULTS;
+			const next =
+				typeof nextOrUpdater === 'function'
+					? nextOrUpdater( current )
+					: nextOrUpdater;
+			const reconciled = {
+				...next,
+				fields: reconcileFieldsOrder( current.fields, next.fields ),
+			};
+			setPreference( PREFS_SCOPE, VIEW_PREF, reconciled );
 		},
 		[ setPreference ]
 	);
@@ -259,8 +317,12 @@ export default function App() {
 				id: 'mark-attended',
 				label: __( 'Mark as attended', 'woocommerce-bookings' ),
 				supportsBulk: true,
+				// CIAB shows the toggle regardless of past/future — merchant
+				// can pre-mark before the booking happens, mark during, or
+				// after. Just hide for cancelled and when already attended.
 				isEligible: ( item ) =>
-					!! item?.is_past && item?.attendance_status === 'unattended',
+					item?.status !== 'cancelled' &&
+					item?.attendance_status !== 'attended',
 				callback: ( items ) => {
 					apiFetch( {
 						path: REST_BASE + 'bookings/mark-attended',
@@ -274,7 +336,8 @@ export default function App() {
 				label: __( 'Mark as unattended', 'woocommerce-bookings' ),
 				supportsBulk: true,
 				isEligible: ( item ) =>
-					!! item?.is_past && item?.attendance_status === 'attended',
+					item?.status !== 'cancelled' &&
+					item?.attendance_status === 'attended',
 				callback: ( items ) => {
 					apiFetch( {
 						path: REST_BASE + 'bookings/mark-unattended',
@@ -287,16 +350,33 @@ export default function App() {
 				id: 'mark-paid',
 				label: __( 'Mark as paid', 'woocommerce-bookings' ),
 				supportsBulk: true,
+				// CIAB: shown for any non-paid, non-cancelled booking. `complete`
+				// can still need a missing payment recorded (booking ran its
+				// course but the order was never paid).
 				isEligible: ( item ) => {
 					const s = item?.status;
-					return s !== 'paid' && s !== 'complete' && s !== 'cancelled' && s !== 'refunded';
+					return s !== 'paid' && s !== 'cancelled' && s !== 'refunded';
 				},
 				callback: ( items ) => {
 					apiFetch( {
 						path: REST_BASE + 'bookings/mark-paid',
 						method: 'POST',
 						data: { ids: items.map( ( i ) => i.id ) },
-					} ).then( () => setRefreshToken( ( n ) => n + 1 ) ).catch( () => {} );
+					} )
+						.then( () => {
+							setRefreshToken( ( n ) => n + 1 );
+							createInfoNotice(
+								__( 'Booking marked as paid.', 'woocommerce-bookings' ),
+								{ type: 'snackbar' }
+							);
+						} )
+						.catch( ( err ) => {
+							createInfoNotice(
+								( err && err.message ) ||
+									__( 'Mark as paid failed.', 'woocommerce-bookings' ),
+								{ type: 'snackbar' }
+							);
+						} );
 				},
 			},
 			{
@@ -304,8 +384,12 @@ export default function App() {
 				label: __( 'Cancel', 'woocommerce-bookings' ),
 				supportsBulk: true,
 				isDestructive: true,
-				isEligible: ( item ) =>
-					item?.status !== 'cancelled' && item?.status !== 'complete',
+				// CIAB: hide once paid (refund instead) or settled. Cancel
+				// is only meaningful for pre-payment / pre-completion states.
+				isEligible: ( item ) => {
+					const s = item?.status;
+					return s !== 'cancelled' && s !== 'paid' && s !== 'complete' && s !== 'refunded';
+				},
 				callback: ( items ) => {
 					apiFetch( {
 						path: REST_BASE + 'bookings/cancel',
@@ -403,7 +487,7 @@ export default function App() {
 				isLoading={ isLoading }
 				getItemId={ ( item ) => String( item.id ) }
 				renderItemLink={ ( { item, ...props } ) => (
-					<Link href={ item.detail_url || item.edit_url } { ...props } />
+					<a href={ item.detail_url || item.edit_url } { ...props } />
 				) }
 				empty={
 					<BookingEmptyState
