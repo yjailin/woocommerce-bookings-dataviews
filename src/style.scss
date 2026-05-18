@@ -604,3 +604,154 @@ body.wc_booking_page_wc-bookings-dataviews {
 	font-style: italic;
 	font-size: 13px;
 }
+
+/* --- Reschedule modal -------------------------------------------------- */
+
+/* Ported from CIAB's reschedule-booking.scss. Layout: calendar on the
+ * left, vertical divider, slots column on the right. The slots list is
+ * a fixed-height scroll region with a top/bottom gradient fade driven by
+ * useScrollFade. */
+
+// `className` on @wordpress/components Modal lands on the
+// `.components-modal__frame` element itself (not a descendant), so the
+// modal-size override has to chain on the same node, not nest. Pin to
+// 840 × 630 to match the CIAB reference; clamp to viewport on small
+// screens so the dialog stays usable.
+.wc-bookings-dv-reschedule-modal.components-modal__frame {
+	width: min(840px, calc(100vw - 32px));
+	max-width: min(840px, calc(100vw - 32px));
+	height: min(630px, calc(100vh - 32px));
+	max-height: min(630px, calc(100vh - 32px));
+}
+
+.wc-bookings-dv-reschedule-modal {
+	.components-modal__content {
+		padding-top: 24px;
+	}
+}
+
+.wc-bookings-dv-reschedule-modal__loading {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	min-height: 360px;
+}
+
+.woocommerce-bookings-schedule-form {
+	display: flex;
+	flex-direction: row;
+	gap: 24px;
+	align-items: stretch;
+
+	// CIAB sizes day-navigation buttons at 4em × 4em. DateCalendar ships
+	// its own emotion CSS-in-JS rules that constrain the buttons to ~32px
+	// at the same specificity, so the bare class rule loses. Repeat the
+	// class to bump specificity (0,2,0 → 0,3,0) and bypass without
+	// !important.
+	.components-calendar__day-button.components-calendar__day-button,
+	.components-calendar__button-next.components-calendar__button-next,
+	.components-calendar__button-previous.components-calendar__button-previous {
+		width: 4em;
+		height: 4em;
+	}
+}
+
+.woocommerce-bookings-schedule-form__calendar {
+	flex: 0 0 auto;
+}
+
+.woocommerce-bookings-schedule-form__divider {
+	width: 1px;
+	background: #dcdcde;
+	align-self: stretch;
+}
+
+.woocommerce-bookings-schedule-form__slots-loading {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	height: 100%;
+}
+
+.woocommerce-bookings-schedule-form__slots {
+	flex: 1;
+	min-width: 220px;
+}
+
+.woocommerce-bookings-schedule-form__slots-list {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	height: 325px;
+	overflow-y: auto;
+	padding: 3px 4px 3px 3px;
+}
+
+// Match CIAB's reschedule-booking.scss button dimensions exactly. The
+// double-class boost handles @wordpress/ui's own button height rules.
+.woocommerce-bookings-schedule-form__slots-list__button.woocommerce-bookings-schedule-form__slots-list__button {
+	width: 100%;
+	line-height: 3;
+	height: 40px;
+}
+
+/* Top/bottom gradient masks tied to scroll position. The variables are
+ * written from useScrollFade — `--schedule-fade-top-opacity` flips to 1
+ * when the user scrolls down, `--schedule-fade-opacity` flips to 0 at
+ * the bottom. */
+.woocommerce-bookings-schedule-form__slots-fade {
+	position: relative;
+	--schedule-fade-opacity: 1;
+	--schedule-fade-top-opacity: 0;
+
+	&::after {
+		content: "";
+		position: absolute;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		height: 32px;
+		z-index: 1;
+		pointer-events: none;
+		background: linear-gradient(
+			to bottom,
+			rgba(255, 255, 255, 0),
+			rgba(255, 255, 255, 1)
+		);
+		opacity: var(--schedule-fade-opacity, 1);
+		transition: opacity 120ms ease-out;
+	}
+
+	&::before {
+		content: "";
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 32px;
+		z-index: 1;
+		pointer-events: none;
+		background: linear-gradient(
+			to top,
+			rgba(255, 255, 255, 0),
+			rgba(255, 255, 255, 1)
+		);
+		opacity: var(--schedule-fade-top-opacity, 0);
+		transition: opacity 120ms ease-out;
+	}
+}
+
+@media (max-width: 782px) {
+	.woocommerce-bookings-schedule-form {
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.woocommerce-bookings-schedule-form__divider {
+		display: none;
+	}
+
+	.woocommerce-bookings-schedule-form__slots-list {
+		padding-right: 3px;
+	}
+}

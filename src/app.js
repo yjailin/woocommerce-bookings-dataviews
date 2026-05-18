@@ -11,6 +11,7 @@ import { store as preferencesStore } from '@wordpress/preferences';
 import { create as createPersistenceLayer } from '@wordpress/preferences-persistence';
 import { buildFields } from './fields';
 import { BookingEmptyState } from './empty-state';
+import { buildRescheduleAction } from './reschedule-booking';
 
 if ( window.WC_BOOKINGS_DATAVIEWS_DATA?.nonce ) {
 	apiFetch.use( apiFetch.createNonceMiddleware( window.WC_BOOKINGS_DATAVIEWS_DATA.nonce ) );
@@ -291,13 +292,11 @@ export default function App() {
 
 	const fields = useMemo( () => buildFields( options ), [ options ] );
 
-	// Order mirrors CIAB's row Actions menu exactly:
-	//   View booking → Mark as attended/unattended → Mark as paid →
-	//   Cancel → View order → View customer profile → Refund.
+	// Order mirrors CIAB's row Actions menu:
+	//   View booking → Mark attended/unattended → Mark as paid →
+	//   Cancel → Reschedule → View order → Refund.
 	// Confirm / Refuse are WC-Bookings-specific (no pending-confirmation
 	// status in CIAB) and live at the end of the menu.
-	// Reschedule is intentionally NOT here — CIAB doesn't expose it in
-	// the list, only in the detail-page kebab.
 	const actions = useMemo(
 		() => [
 			{
@@ -398,6 +397,9 @@ export default function App() {
 					} ).then( () => setRefreshToken( ( n ) => n + 1 ) ).catch( () => {} );
 				},
 			},
+			buildRescheduleAction( {
+				onSuccess: () => setRefreshToken( ( n ) => n + 1 ),
+			} ),
 			{
 				id: 'view-order',
 				label: __( 'View order', 'woocommerce-bookings' ),

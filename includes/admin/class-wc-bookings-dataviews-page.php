@@ -164,6 +164,12 @@ class WC_Bookings_DataViews_Page {
 				'currentUrl' => admin_url( 'edit.php?post_type=wc_booking' ),
 				'listUrl'    => admin_url( 'edit.php?post_type=wc_booking&page=' . self::PAGE_SLUG ),
 				'detailUrl'  => admin_url( 'edit.php?post_type=wc_booking&page=' . self::PAGE_SLUG . '&booking=' ),
+				// Site-wide date/time formats from Settings → General. The
+				// reschedule modal and any other client-side date helpers
+				// read these so admin-side display follows WordPress
+				// preferences instead of hardcoded fallbacks.
+				'dateFormat' => (string) ( get_option( 'date_format' ) ?: 'F j, Y' ),
+				'timeFormat' => (string) ( get_option( 'time_format' ) ?: 'g:i a' ),
 			)
 		);
 	}

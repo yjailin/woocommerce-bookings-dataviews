@@ -68,6 +68,10 @@ import { store as noticesStore } from '@wordpress/notices';
 import { Icon, box, mapMarker, moreVertical } from '@wordpress/icons';
 import { __experimentalInputControl as InputControl } from '@wordpress/components';
 import { buildFields, paymentStateFor, PAYMENT_MAP } from './fields';
+import {
+	RescheduleBookingDialog,
+	isRescheduleEligible,
+} from './reschedule-booking';
 
 const REST_BASE = window.WC_BOOKINGS_DATAVIEWS_DATA?.restUrl || '';
 const LIST_URL = window.WC_BOOKINGS_DATAVIEWS_DATA?.listUrl || '';
@@ -77,7 +81,10 @@ const LIST_URL = window.WC_BOOKINGS_DATAVIEWS_DATA?.listUrl || '';
 // parent after a successful action. Avoids prop-drilling through DataForm.
 // =============================================================================
 
-const BookingDetailContext = createContext( { onRefresh: () => {} } );
+const BookingDetailContext = createContext( {
+	onRefresh: () => {},
+	openReschedule: () => {},
+} );
 
 // =============================================================================
 // Header helpers
@@ -748,20 +755,16 @@ function NoteRender( { item } ) {
  */
 function BookingActionsButtons( { item } ) {
 	const { pending, run } = useBookingActionRunner( item.id );
+	const { openReschedule } = useContext( BookingDetailContext );
 	const can = item.can || {};
-	const canReschedule =
-		item.status !== 'cancelled' && item.status !== 'complete';
+	const canReschedule = isRescheduleEligible( item );
 
 	const actions = [
 		canReschedule && {
 			id: 'reschedule',
 			label: __( 'Reschedule', 'woocommerce-bookings' ),
 			variant: 'minimal',
-			endpoint: null,
-			notImplementedMessage: __(
-				'Reschedule is coming soon.',
-				'woocommerce-bookings'
-			),
+			onClick: openReschedule,
 		},
 		can.mark_attended && {
 			id: 'mark-attended',
@@ -798,7 +801,9 @@ function BookingActionsButtons( { item } ) {
 					key={ action.id }
 					variant={ action.variant }
 					size="compact"
-					onClick={ () => run( action ) }
+					onClick={ () =>
+						action.onClick ? action.onClick() : run( action )
+					}
 					disabled={ pending !== null }
 					loading={ pending === action.id }
 				>
@@ -1212,7 +1217,9 @@ function useBookingDetail( bookingId, refreshToken ) {
 
 function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 	const { pending, run } = useBookingActionRunner( booking.id );
-	const { onRefresh } = useContext( BookingDetailContext );
+	const { onRefresh, openReschedule: openRescheduleFromContext } = useContext(
+		BookingDetailContext
+	);
 	const { createSuccessNotice } = useDispatch( noticesStore );
 	const can = booking.can || {};
 	const orderUrl = booking.order?.edit_url;
@@ -1255,8 +1262,7 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 	// the Booking details / Payment cards. Gating uses the same `can.*`
 	// flags so a single source of truth drives both surfaces. Order
 	// matches CIAB's booking kebab.
-	const canReschedule =
-		booking.status !== 'cancelled' && booking.status !== 'complete';
+	const canReschedule = isRescheduleEligible( booking );
 
 	const controls = [
 		can.cancel && {
@@ -1266,15 +1272,7 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 		},
 		canReschedule && {
 			title: __( 'Reschedule', 'woocommerce-bookings' ),
-			onClick: () =>
-				run( {
-					id: 'reschedule',
-					endpoint: null,
-					notImplementedMessage: __(
-						'Reschedule is coming soon.',
-						'woocommerce-bookings'
-					),
-				} ),
+			onClick: openRescheduleFromContext,
 			isDisabled: busy,
 		},
 		orderUrl && {
@@ -1423,7 +1421,19 @@ export default function BookingDetail( { bookingId } ) {
 		() => setRefreshToken( ( n ) => n + 1 ),
 		[]
 	);
-	const contextValue = useMemo( () => ( { onRefresh } ), [ onRefresh ] );
+	const [ isRescheduleOpen, setIsRescheduleOpen ] = useState( false );
+	const openReschedule = useCallback(
+		() => setIsRescheduleOpen( true ),
+		[]
+	);
+	const closeReschedule = useCallback(
+		() => setIsRescheduleOpen( false ),
+		[]
+	);
+	const contextValue = useMemo(
+		() => ( { onRefresh, openReschedule } ),
+		[ onRefresh, openReschedule ]
+	);
 
 	const formFields = useMemo(
 		() => buildFormFields( booking?.status ),
@@ -1598,6 +1608,12 @@ export default function BookingDetail( { bookingId } ) {
 					/>
 				</div>
 			</Page>
+			<RescheduleBookingDialog
+				booking={ booking }
+				isOpen={ isRescheduleOpen }
+				onClose={ closeReschedule }
+				onSuccess={ onRefresh }
+			/>
 		</BookingDetailContext.Provider>
 	);
 

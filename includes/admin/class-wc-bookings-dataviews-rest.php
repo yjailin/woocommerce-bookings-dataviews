@@ -20,11 +20,13 @@ if ( class_exists( 'WC_Bookings_DataViews_REST' ) ) {
  * GET  /wc-bookings/v1/dataviews/bookings/(?P<id>\d+)
  * GET  /wc-bookings/v1/dataviews/statuses
  * GET  /wc-bookings/v1/dataviews/filter-options
+ * GET  /wc-bookings/v1/dataviews/products/(?P<id>\d+)/availability
  * POST /wc-bookings/v1/dataviews/bookings/confirm
  * POST /wc-bookings/v1/dataviews/bookings/cancel
  * POST /wc-bookings/v1/dataviews/bookings/mark-paid
  * POST /wc-bookings/v1/dataviews/bookings/mark-attended
  * POST /wc-bookings/v1/dataviews/bookings/mark-unattended
+ * POST /wc-bookings/v1/dataviews/bookings/(?P<id>\d+)/reschedule
  */
 class WC_Bookings_DataViews_REST {
 
@@ -245,6 +247,65 @@ class WC_Bookings_DataViews_REST {
 					'fields' => array(
 						'required' => true,
 						'type'     => 'object',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/dataviews/products/(?P<id>\d+)/availability',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => $capability_check,
+				'callback'            => array( $this, 'get_product_availability' ),
+				'args'                => array(
+					'id'              => array(
+						'required'          => true,
+						'sanitize_callback' => 'absint',
+					),
+					'start_date'      => array(
+						'required'          => true,
+						'sanitize_callback' => 'sanitize_text_field',
+					),
+					'end_date'        => array(
+						'required'          => true,
+						'sanitize_callback' => 'sanitize_text_field',
+					),
+					'resource_id'     => array(
+						'default'           => 0,
+						'sanitize_callback' => 'absint',
+					),
+					'timezone_offset' => array(
+						'default' => 0,
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/dataviews/bookings/(?P<id>\d+)/reschedule',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => $capability_check,
+				'callback'            => array( $this, 'reschedule_booking' ),
+				'args'                => array(
+					'id'          => array(
+						'required'          => true,
+						'sanitize_callback' => 'absint',
+					),
+					'start'       => array(
+						'required'          => true,
+						'sanitize_callback' => 'absint',
+					),
+					'end'         => array(
+						'required'          => true,
+						'sanitize_callback' => 'absint',
+					),
+					'resource_id' => array(
+						'default'           => 0,
+						'sanitize_callback' => 'absint',
 					),
 				),
 			)
@@ -501,6 +562,27 @@ class WC_Bookings_DataViews_REST {
 			$thumbnail_id                 = $product_id ? get_post_thumbnail_id( $product_id ) : 0;
 			$thumbnail                    = $thumbnail_id ? wp_get_attachment_image_src( $thumbnail_id, 'thumbnail' ) : null;
 			$base['product']['thumbnail'] = $thumbnail ? $thumbnail[0] : '';
+
+			// Reschedule-modal inputs. The modal needs the booking duration
+			// (to compute the new end from the picked start slot) and the
+			// full list of selectable resources for the team-member
+			// dropdown. Resources are only meaningful when the product has
+			// them — empty array signals "skip the dropdown".
+			$base['product']['booking_duration']      = (int) $product->get_duration();
+			$base['product']['booking_duration_unit'] = (string) $product->get_duration_unit();
+			$resources_list                   = array();
+			if ( $product->has_resources() ) {
+				foreach ( $product->get_resources() as $res ) {
+					$resources_list[] = array(
+						'id'   => (int) $res->get_id(),
+						'name' => (string) $res->get_name(),
+					);
+				}
+			}
+			$base['product']['resources']        = $resources_list;
+			$base['product']['assignment_type']  = $product->has_resources()
+				? ( $product->is_resource_assignment_type( 'automatic' ) ? 'automatic' : 'customer' )
+				: '';
 		}
 
 		// Customer phone (detail-only — user_id / profile_url already on base).
@@ -611,6 +693,11 @@ class WC_Bookings_DataViews_REST {
 			'mark_attended'    => 'cancelled' !== $booking->get_status() && 'attended' !== $base['attendance_status'],
 			'mark_unattended'  => 'cancelled' !== $booking->get_status() && 'attended' === $base['attendance_status'],
 			'view_order'       => ! empty( $base['order'] ),
+			// Mirrors CIAB's reschedule isEligible. The JS side reads the
+			// same gating from `isRescheduleEligible(item)`; this flag
+			// drives the inline button + kebab visibility on the detail
+			// page server-side.
+			'reschedule'       => ! in_array( $booking->get_status(), array( 'cancelled', 'complete', 'failed', 'in-cart' ), true ),
 		);
 
 		return $base;
@@ -638,6 +725,190 @@ class WC_Bookings_DataViews_REST {
 			$updated[] = $id;
 		}
 		return rest_ensure_response( array( 'updated' => $updated ) );
+	}
+
+	/**
+	 * Return monthly availability for a bookable product, formatted to match
+	 * CIAB's `/wc-bookings/v2/products/{id}/availability` response so the
+	 * reschedule modal's hooks (`useBookingAvailability`,
+	 * `fetchMonthAvailability`) work unchanged.
+	 *
+	 * Wraps WC Bookings' own engine — `WC_Product_Booking::get_blocks_in_range()`
+	 * + `get_time_slots()` — and re-projects the slots through the requested
+	 * client timezone offset (mirrors `WC_Bookings_Availability_Store_API`).
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function get_product_availability( WP_REST_Request $request ) {
+		$product_id = absint( $request['id'] );
+		$product    = function_exists( 'get_wc_product_booking' )
+			? get_wc_product_booking( $product_id )
+			: null;
+		if ( ! $product ) {
+			return new WP_Error(
+				'wc_bookings_dv_invalid_product',
+				__( 'Invalid product ID.', 'woocommerce-bookings' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$start_date_input = (string) $request['start_date'];
+		$end_date_input   = (string) $request['end_date'];
+		$timezone_offset  = (int) $request['timezone_offset'];
+		$resource_id      = (int) $request['resource_id'];
+
+		$start_date = $timezone_offset
+			? strtotime( $start_date_input . ' ' . $timezone_offset . ' hours' )
+			: strtotime( $start_date_input );
+		$end_date   = $timezone_offset
+			? strtotime( $end_date_input . ' ' . $timezone_offset . ' hours' )
+			: strtotime( $end_date_input );
+
+		if ( ! $start_date || ! $end_date || $start_date >= $end_date ) {
+			return new WP_Error(
+				'wc_bookings_dv_invalid_range',
+				__( 'Invalid date range.', 'woocommerce-bookings' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$blocks           = $product->get_blocks_in_range( $start_date, $end_date, null, $resource_id, array() );
+		$slots            = $product->get_time_slots( $blocks, $resource_id, $start_date, $end_date );
+		$available_blocks = self::adjust_blocks_for_timezone( $slots, $timezone_offset );
+
+		return rest_ensure_response(
+			array(
+				'product_id'      => $product_id,
+				'resource_id'     => $resource_id,
+				'start_date'      => $start_date_input,
+				'end_date'        => $end_date_input,
+				'timezone_offset' => $timezone_offset,
+				'availability'    => self::format_availability( $available_blocks ),
+			)
+		);
+	}
+
+	/**
+	 * Re-anchor block timestamps in the caller's timezone — only when the
+	 * store is configured to "use client timezone". Otherwise return the
+	 * blocks unmodified. Mirrors
+	 * `WC_Bookings_Availability_Store_API::adjust_blocks_for_timezone()`.
+	 *
+	 * @param array $blocks          Time-slot blocks keyed by timestamp.
+	 * @param int   $timezone_offset Offset in hours (e.g. -5).
+	 * @return array
+	 */
+	private static function adjust_blocks_for_timezone( array $blocks, $timezone_offset = 0 ) {
+		$timezone_offset = (int) $timezone_offset;
+		if (
+			0 === $timezone_offset ||
+			! class_exists( 'WC_Bookings_Timezone_Settings' ) ||
+			'yes' !== WC_Bookings_Timezone_Settings::get( 'use_client_timezone' )
+		) {
+			return $blocks;
+		}
+
+		$server_timezone = function_exists( 'wc_booking_get_timezone_string' )
+			? wc_booking_get_timezone_string()
+			: wp_timezone_string();
+		$updated         = array();
+		foreach ( $blocks as $timestamp => $block ) {
+			// phpcs:ignore WordPress.DateTime.RestrictedFunctions.date_date
+			$dt              = new DateTime( date( 'Y-m-d\TH:i:s', $timestamp ), new DateTimeZone( $server_timezone ) );
+			$new_ts          = $dt->getTimestamp() + $timezone_offset * HOUR_IN_SECONDS;
+			$updated[ $new_ts ] = $block;
+		}
+		return $updated;
+	}
+
+	/**
+	 * Group a flat timestamp-keyed slots array into the nested
+	 * { "YYYY-MM": { "YYYY-MM-DD": { "HH:mm:ss": count } } } shape the
+	 * front-end consumes.
+	 *
+	 * @param array $blocks Slots keyed by Unix timestamp.
+	 * @return array
+	 */
+	private static function format_availability( array $blocks ) {
+		$data = array();
+		foreach ( $blocks as $timestamp => $block ) {
+			$month = gmdate( 'Y-m', $timestamp );
+			$day   = gmdate( 'Y-m-d', $timestamp );
+			$time  = gmdate( 'H:i:s', $timestamp );
+			if ( ! isset( $data[ $month ] ) ) {
+				$data[ $month ] = array();
+			}
+			if ( ! isset( $data[ $month ][ $day ] ) ) {
+				$data[ $month ][ $day ] = array();
+			}
+			$data[ $month ][ $day ][ $time ] = isset( $block['available'] ) ? (int) $block['available'] : 0;
+		}
+		return $data;
+	}
+
+	/**
+	 * Reschedule a booking — set new start/end (and optionally resource).
+	 *
+	 * Times come in as Unix seconds; we hand them straight to the
+	 * WC_Booking setters, which accept timestamps. The save() call goes
+	 * through the data store so cached objects invalidate (same pattern
+	 * mark_attended / mark_paid use).
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function reschedule_booking( WP_REST_Request $request ) {
+		$id = absint( $request['id'] );
+		if ( 'wc_booking' !== get_post_type( $id ) ) {
+			return new WP_Error(
+				'wc_bookings_dv_not_found',
+				__( 'Booking not found.', 'woocommerce-bookings' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$start = (int) $request['start'];
+		$end   = (int) $request['end'];
+		if ( $start <= 0 || $end <= $start ) {
+			return new WP_Error(
+				'wc_bookings_dv_invalid_range',
+				__( 'Invalid start or end time.', 'woocommerce-bookings' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$booking = get_wc_booking( $id );
+		if ( ! $booking ) {
+			return new WP_Error(
+				'wc_bookings_dv_not_found',
+				__( 'Booking not found.', 'woocommerce-bookings' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		// Mirror CIAB's `isEligible` — reject rescheduling for booking
+		// statuses where it would make no sense.
+		if ( in_array( $booking->get_status(), array( 'cancelled', 'complete', 'failed', 'in-cart' ), true ) ) {
+			return new WP_Error(
+				'wc_bookings_dv_not_eligible',
+				__( 'This booking cannot be rescheduled.', 'woocommerce-bookings' ),
+				array( 'status' => 409 )
+			);
+		}
+
+		$booking->set_start( $start );
+		$booking->set_end( $end );
+
+		$resource_id = isset( $request['resource_id'] ) ? (int) $request['resource_id'] : 0;
+		if ( $resource_id > 0 ) {
+			$booking->set_resource_id( $resource_id );
+		}
+
+		$booking->save();
+
+		$post = get_post( $id );
+		return rest_ensure_response( $this->shape_booking_detail( $booking, $post ) );
 	}
 
 	/**
@@ -1318,6 +1589,17 @@ class WC_Bookings_DataViews_REST {
 		$start         = (string) get_post_meta( $post->ID, '_booking_start', true );
 		$now           = ( new DateTimeImmutable( 'now', wp_timezone() ) )->format( 'YmdHis' );
 
+		// Unix-seconds projections of the YmdHis meta strings, used by
+		// the reschedule modal (it expects raw timestamps so it can
+		// build JS Date objects without parsing locale-formatted text).
+		$tz            = wp_timezone();
+		$start_dt      = $start ? DateTimeImmutable::createFromFormat( 'YmdHis', $start, $tz ) : false;
+		$end_dt        = $end ? DateTimeImmutable::createFromFormat( 'YmdHis', $end, $tz ) : false;
+		$start_ts      = $start_dt ? $start_dt->getTimestamp() : 0;
+		$end_ts        = $end_dt ? $end_dt->getTimestamp() : 0;
+		$product_id_v  = $product && is_callable( array( $product, 'get_id' ) ) ? (int) $product->get_id() : 0;
+		$resource_id_v = $resource ? (int) $resource->get_id() : 0;
+
 		return array(
 			'id'                      => $post->ID,
 			'edit_url'                => admin_url( 'post.php?post=' . $post->ID . '&action=edit' ),
@@ -1351,6 +1633,11 @@ class WC_Bookings_DataViews_REST {
 			) : null,
 			'start_date'              => $booking->get_start_date(),
 			'end_date'                => $booking->get_end_date(),
+			// Raw timestamps + ids consumed by the reschedule modal.
+			'start'                   => $start_ts,
+			'end'                     => $end_ts,
+			'product_id'              => $product_id_v,
+			'resource_id'             => $resource_id_v,
 		);
 	}
 }
