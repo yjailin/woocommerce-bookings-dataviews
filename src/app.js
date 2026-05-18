@@ -292,26 +292,25 @@ export default function App() {
 
 	const fields = useMemo( () => buildFields( options ), [ options ] );
 
-	// Order mirrors CIAB's row Actions menu:
-	//   View booking → Mark attended/unattended → Mark as paid →
-	//   Cancel → Reschedule → View order → Refund.
-	// Confirm / Refuse are WC-Bookings-specific (no pending-confirmation
-	// status in CIAB) and live at the end of the menu.
+	// Canonical action order — enforced across every surface where
+	// actions appear (this list view kebab, the bulk actions bar, the
+	// detail-page header kebab, and the detail-page inline button
+	// rows). Each surface independently filters by eligibility, but
+	// the relative ordering is identical. New actions slot into this
+	// sequence so the user can build muscle memory.
+	//
+	//   1. Mark as attended
+	//   2. Mark as unattended
+	//   3. Mark as paid
+	//   4. Confirm
+	//   5. Refuse
+	//   6. Reschedule
+	//   7. View booking
+	//   8. View order
+	//   9. Refund
+	//  10. Cancel
 	const actions = useMemo(
 		() => [
-			{
-				id: 'view-booking',
-				label: __( 'View booking', 'woocommerce-bookings' ),
-				isPrimary: true,
-				icon: seen,
-				isEligible: () => true,
-				supportsBulk: false,
-				callback: ( items ) => {
-					const item = items[ 0 ];
-					const url = item?.detail_url || item?.edit_url;
-					if ( url ) window.location.href = url;
-				},
-			},
 			{
 				id: 'mark-attended',
 				label: __( 'Mark as attended', 'woocommerce-bookings' ),
@@ -379,16 +378,24 @@ export default function App() {
 				},
 			},
 			{
-				id: 'cancel',
-				label: __( 'Cancel', 'woocommerce-bookings' ),
+				id: 'confirm',
+				label: __( 'Confirm', 'woocommerce-bookings' ),
 				supportsBulk: true,
-				isDestructive: true,
-				// CIAB: hide once paid (refund instead) or settled. Cancel
-				// is only meaningful for pre-payment / pre-completion states.
-				isEligible: ( item ) => {
-					const s = item?.status;
-					return s !== 'cancelled' && s !== 'paid' && s !== 'complete' && s !== 'refunded';
+				isEligible: ( item ) => item?.status === 'pending-confirmation',
+				callback: ( items ) => {
+					apiFetch( {
+						path: REST_BASE + 'bookings/confirm',
+						method: 'POST',
+						data: { ids: items.map( ( i ) => i.id ) },
+					} ).then( () => setRefreshToken( ( n ) => n + 1 ) ).catch( () => {} );
 				},
+			},
+			{
+				id: 'refuse',
+				label: __( 'Refuse', 'woocommerce-bookings' ),
+				isDestructive: true,
+				supportsBulk: true,
+				isEligible: ( item ) => item?.status === 'pending-confirmation',
 				callback: ( items ) => {
 					apiFetch( {
 						path: REST_BASE + 'bookings/cancel',
@@ -400,6 +407,27 @@ export default function App() {
 			buildRescheduleAction( {
 				onSuccess: () => setRefreshToken( ( n ) => n + 1 ),
 			} ),
+			{
+				// View booking is the row's quick-access action: it
+				// surfaces as a hover-revealed icon button next to the
+				// kebab (DataViews' `isPrimary` rendering). It is also
+				// hidden from the kebab dropdown via SCSS to avoid
+				// duplicating the inline button — see the rule for
+				// `.dataviews-item-actions` in style.scss. The canonical
+				// order still slots View booking at position 6 for any
+				// future surface that lists every action.
+				id: 'view-booking',
+				label: __( 'View booking', 'woocommerce-bookings' ),
+				isPrimary: true,
+				icon: seen,
+				isEligible: () => true,
+				supportsBulk: false,
+				callback: ( items ) => {
+					const item = items[ 0 ];
+					const url = item?.detail_url || item?.edit_url;
+					if ( url ) window.location.href = url;
+				},
+			},
 			{
 				id: 'view-order',
 				label: __( 'View order', 'woocommerce-bookings' ),
@@ -421,24 +449,16 @@ export default function App() {
 				},
 			},
 			{
-				id: 'confirm',
-				label: __( 'Confirm', 'woocommerce-bookings' ),
+				id: 'cancel',
+				label: __( 'Cancel', 'woocommerce-bookings' ),
 				supportsBulk: true,
-				isEligible: ( item ) => item?.status === 'pending-confirmation',
-				callback: ( items ) => {
-					apiFetch( {
-						path: REST_BASE + 'bookings/confirm',
-						method: 'POST',
-						data: { ids: items.map( ( i ) => i.id ) },
-					} ).then( () => setRefreshToken( ( n ) => n + 1 ) ).catch( () => {} );
-				},
-			},
-			{
-				id: 'refuse',
-				label: __( 'Refuse', 'woocommerce-bookings' ),
 				isDestructive: true,
-				supportsBulk: true,
-				isEligible: ( item ) => item?.status === 'pending-confirmation',
+				// CIAB: hide once paid (refund instead) or settled. Cancel
+				// is only meaningful for pre-payment / pre-completion states.
+				isEligible: ( item ) => {
+					const s = item?.status;
+					return s !== 'cancelled' && s !== 'paid' && s !== 'complete' && s !== 'refunded';
+				},
 				callback: ( items ) => {
 					apiFetch( {
 						path: REST_BASE + 'bookings/cancel',

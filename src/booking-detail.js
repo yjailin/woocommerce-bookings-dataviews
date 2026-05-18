@@ -759,13 +759,10 @@ function BookingActionsButtons( { item } ) {
 	const can = item.can || {};
 	const canReschedule = isRescheduleEligible( item );
 
+	// Canonical action order (see app.js for the full list). On this
+	// inline row only attendance + reschedule can appear; order them
+	// per canonical so the inline row tracks the kebab and the list.
 	const actions = [
-		canReschedule && {
-			id: 'reschedule',
-			label: __( 'Reschedule', 'woocommerce-bookings' ),
-			variant: 'minimal',
-			onClick: openReschedule,
-		},
 		can.mark_attended && {
 			id: 'mark-attended',
 			label: __( 'Mark as attended', 'woocommerce-bookings' ),
@@ -785,6 +782,12 @@ function BookingActionsButtons( { item } ) {
 				'Booking marked as unattended.',
 				'woocommerce-bookings'
 			),
+		},
+		canReschedule && {
+			id: 'reschedule',
+			label: __( 'Reschedule', 'woocommerce-bookings' ),
+			variant: 'minimal',
+			onClick: openReschedule,
 		},
 	].filter( Boolean );
 
@@ -825,7 +828,20 @@ function BookingOrderActionsButtons( { item } ) {
 	const orderUrl = item.order?.edit_url;
 	const canRefund = !! item.order;
 
+	// Canonical action order (see app.js). On the Payment card only
+	// Mark-paid, View order, and Refund can appear; order them per
+	// canonical (mark-paid → view-order → refund).
 	const actions = [
+		can.mark_paid && {
+			id: 'mark-paid',
+			label: __( 'Mark as paid', 'woocommerce-bookings' ),
+			variant: 'outline',
+			endpoint: 'bookings/mark-paid',
+			successMessage: __(
+				'Booking marked as paid.',
+				'woocommerce-bookings'
+			),
+		},
 		!! orderUrl && {
 			id: 'view-order',
 			label: __( 'View order', 'woocommerce-bookings' ),
@@ -840,16 +856,6 @@ function BookingOrderActionsButtons( { item } ) {
 			endpoint: null,
 			notImplementedMessage: __(
 				'Refund is coming soon.',
-				'woocommerce-bookings'
-			),
-		},
-		can.mark_paid && {
-			id: 'mark-paid',
-			label: __( 'Mark as paid', 'woocommerce-bookings' ),
-			variant: 'outline',
-			endpoint: 'bookings/mark-paid',
-			successMessage: __(
-				'Booking marked as paid.',
 				'woocommerce-bookings'
 			),
 		},
@@ -1257,17 +1263,51 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 		}
 	}, [ booking.id, onRefresh, createSuccessNotice ] );
 
-	// Mirror CIAB: the kebab is the central, always-discoverable list of
-	// entity actions. It intentionally overlaps with the inline buttons on
-	// the Booking details / Payment cards. Gating uses the same `can.*`
-	// flags so a single source of truth drives both surfaces. Order
-	// matches CIAB's booking kebab.
+	// Canonical action order (see app.js). The header kebab is the
+	// central, always-discoverable list of entity actions and
+	// intentionally overlaps with the inline buttons on the Booking
+	// details / Payment cards. Gating uses the same `can.*` flags so
+	// a single source of truth drives every surface.
 	const canReschedule = isRescheduleEligible( booking );
 
 	const controls = [
-		can.cancel && {
-			title: __( 'Cancel', 'woocommerce-bookings' ),
-			onClick: openCancelDialog,
+		can.mark_attended && {
+			title: __( 'Mark as attended', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'mark-attended',
+					endpoint: 'bookings/mark-attended',
+					successMessage: __(
+						'Booking marked as attended.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
+		can.mark_unattended && {
+			title: __( 'Mark as unattended', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'mark-unattended',
+					endpoint: 'bookings/mark-unattended',
+					successMessage: __(
+						'Booking marked as unattended.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
+		can.mark_paid && {
+			title: __( 'Mark as paid', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'mark-paid',
+					endpoint: 'bookings/mark-paid',
+					successMessage: __(
+						'Booking marked as paid.',
+						'woocommerce-bookings'
+					),
+				} ),
 			isDisabled: busy,
 		},
 		canReschedule && {
@@ -1295,43 +1335,9 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 				} ),
 			isDisabled: busy,
 		},
-		can.mark_paid && {
-			title: __( 'Mark as paid', 'woocommerce-bookings' ),
-			onClick: () =>
-				run( {
-					id: 'mark-paid',
-					endpoint: 'bookings/mark-paid',
-					successMessage: __(
-						'Booking marked as paid.',
-						'woocommerce-bookings'
-					),
-				} ),
-			isDisabled: busy,
-		},
-		can.mark_attended && {
-			title: __( 'Mark as attended', 'woocommerce-bookings' ),
-			onClick: () =>
-				run( {
-					id: 'mark-attended',
-					endpoint: 'bookings/mark-attended',
-					successMessage: __(
-						'Booking marked as attended.',
-						'woocommerce-bookings'
-					),
-				} ),
-			isDisabled: busy,
-		},
-		can.mark_unattended && {
-			title: __( 'Mark as unattended', 'woocommerce-bookings' ),
-			onClick: () =>
-				run( {
-					id: 'mark-unattended',
-					endpoint: 'bookings/mark-unattended',
-					successMessage: __(
-						'Booking marked as unattended.',
-						'woocommerce-bookings'
-					),
-				} ),
+		can.cancel && {
+			title: __( 'Cancel', 'woocommerce-bookings' ),
+			onClick: openCancelDialog,
 			isDisabled: busy,
 		},
 	].filter( Boolean );
