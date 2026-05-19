@@ -313,19 +313,22 @@ body.wc_booking_page_wc-bookings-dataviews {
 /* DataViews' item-actions component renders an `isPrimary` action twice:
  * once as the inline hover button next to the kebab (good — gives a
  * quick-click without opening the dropdown) and once as the first
- * entry inside the kebab dropdown (duplication we want to avoid). The
- * dropdown is portaled to <body> via `@wordpress/components`'s private
- * Menu, identifiable by the emotion-suffixed `Menu-Menu` class. Only
- * DataViews' row actions use that Menu in this plugin — the legacy
- * header kebab on the detail page uses DropdownMenu (different class)
- * and the filter chips render their own popovers. Hide the duplicate
- * by removing the first menuitem from any Menu opened in this plugin.
+ * entry inside the kebab dropdown (duplication we want to avoid).
+ *
+ * The kebab and the column-header popover both use `@wordpress/components`'s
+ * private Menu, which portals to <body> with the same emotion-suffixed
+ * `Menu-Menu` class. A blanket `[class*="Menu-Menu"]` selector would
+ * over-hide into the column popover — eating "Sort ascending" / "Add
+ * filter" / etc. Instead, `startRowActionsMenuMarker()` in index.js
+ * walks `aria-labelledby` to the trigger and adds this marker class
+ * only when the trigger belongs to the row-actions kebab (identified
+ * by DataViews' `.dataviews-all-actions-button`).
  *
  * If a future change adds a second `isPrimary` action, this rule will
- * over-hide and needs to expand (or move to a content-aware
- * MutationObserver in JS).
+ * over-hide and needs to switch to a content-aware check inside the
+ * observer.
  */
-[class*="Menu-Menu"] [role="menuitem"]:first-child {
+.wc-bookings-dv-row-actions-menu [role="menuitem"]:first-child {
 	display: none;
 }
 
