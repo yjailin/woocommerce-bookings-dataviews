@@ -75,9 +75,13 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 			],
 			filterBy: { operators: [ 'is' ] },
 			getValue: ( { item } ) => item.status,
-			// Only render a badge for non-default booking states. Active
-			// bookings (confirmed/paid/complete/etc.) leave the cell empty
-			// — no point showing the default on every row.
+			// Only render a badge for non-default booking states.
+			// Active bookings (confirmed/paid/complete/etc.) don't get a
+			// dedicated badge — showing "Confirmed" on every row would be
+			// noise — but fall back to an em-dash so the cell isn't
+			// visually empty. Every other column in the list view uses
+			// the same em-dash placeholder for missing values; keep
+			// Status consistent rather than leaving a blank cell.
 			render: ( { item } ) => {
 				if ( item.status === 'cancelled' ) {
 					return h( Badge, { intent: 'informational' }, __( 'Canceled', 'woocommerce-bookings' ) );
@@ -85,7 +89,7 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 				if ( item.status === 'pending-confirmation' ) {
 					return h( Badge, { intent: 'low' }, __( 'Pending', 'woocommerce-bookings' ) );
 				}
-				return null;
+				return h( 'span', null, '—' );
 			},
 		},
 		// Who
