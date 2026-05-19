@@ -441,11 +441,15 @@ export default function App() {
 				id: 'refund',
 				label: __( 'Refund', 'woocommerce-bookings' ),
 				isEligible: ( item ) => !! item?.order,
-				callback: () => {
-					createInfoNotice(
-						__( 'Refund is coming soon.', 'woocommerce-bookings' ),
-						{ type: 'snackbar' }
-					);
+				// Defer to WooCommerce's existing refund UI on the order
+				// edit screen rather than duplicating the flow. The hash
+				// is picked up by WC_Bookings_DataViews_Refund_Redirect,
+				// which auto-clicks WC's native `Refund` button on load.
+				callback: ( items ) => {
+					const url = items[ 0 ]?.order?.edit_url;
+					if ( url ) {
+						window.location.href = url + '#wc-bookings-dv-refund';
+					}
 				},
 			},
 			{

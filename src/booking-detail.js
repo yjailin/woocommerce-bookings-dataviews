@@ -849,15 +849,17 @@ function BookingOrderActionsButtons( { item } ) {
 			type: 'link',
 			href: orderUrl,
 		},
-		canRefund && {
+		canRefund && orderUrl && {
 			id: 'refund',
 			label: __( 'Refund', 'woocommerce-bookings' ),
 			variant: 'outline',
-			endpoint: null,
-			notImplementedMessage: __(
-				'Refund is coming soon.',
-				'woocommerce-bookings'
-			),
+			// Defer to WooCommerce's native refund UI rather than
+			// rebuilding it. The `#wc-bookings-dv-refund` hash is
+			// detected on the order edit screen by
+			// WC_Bookings_DataViews_Refund_Redirect, which auto-clicks
+			// WC's own `Refund` button and scrolls the form into view.
+			type: 'link',
+			href: orderUrl + '#wc-bookings-dv-refund',
 		},
 	].filter( Boolean );
 
@@ -1322,17 +1324,15 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 			},
 			isDisabled: busy,
 		},
-		!! booking.order && {
+		!! booking.order && orderUrl && {
 			title: __( 'Refund', 'woocommerce-bookings' ),
-			onClick: () =>
-				run( {
-					id: 'refund',
-					endpoint: null,
-					notImplementedMessage: __(
-						'Refund is coming soon.',
-						'woocommerce-bookings'
-					),
-				} ),
+			// See app.js / BookingOrderActionsButtons for the same
+			// pattern: redirect to the booking's order edit screen with
+			// the hash that WC_Bookings_DataViews_Refund_Redirect
+			// listens for to auto-open WC's native refund form.
+			onClick: () => {
+				window.location.href = orderUrl + '#wc-bookings-dv-refund';
+			},
 			isDisabled: busy,
 		},
 		can.cancel && {
