@@ -10,13 +10,13 @@
  *       booking-service-info               (panel, no label)
  *       booking-date-time                  (panel, label top)
  *       resource                           (panel, label top)  ← CIAB's team_member_name
- *       booking-actions-button-group       (regular, no label) Reschedule · Mark attended · Mark unattended
+ *       booking-actions-button-group       (regular, no label) Mark attended · Mark unattended · Reschedule
  *
  *   Card 2 — "Payment"             (always open)
  *     summary: total + status (always)
  *     children:
  *       booking_payment_breakdown          (regular, no label) line items + total
- *       booking-order-actions-button-group (regular, no label) View order · Refund · Mark as paid
+ *       booking-order-actions-button-group (regular, no label) Mark as paid · View order · Refund
  *
  *   Card 3 — "Customer"            (collapsed: isOpened false)
  *     summary: customer
@@ -760,8 +760,12 @@ function BookingActionsButtons( { item } ) {
 	const canReschedule = isRescheduleEligible( item );
 
 	// Canonical action order (see app.js for the full list). On this
-	// inline row only attendance + reschedule can appear; order them
-	// per canonical so the inline row tracks the kebab and the list.
+	// inline row only attendance + reschedule can appear (positions
+	// 3-6 in the canonical order); ordered so the inline row tracks
+	// the kebab and the list. Confirm/Refuse (canonical positions
+	// 1-2) live in the page header kebab — they're not duplicated
+	// inline here to keep this card focused on post-confirmation
+	// workflow actions.
 	const actions = [
 		can.mark_attended && {
 			id: 'mark-attended',
@@ -832,8 +836,9 @@ function BookingOrderActionsButtons( { item } ) {
 	const canRefund = !! can.refund;
 
 	// Canonical action order (see app.js). On the Payment card only
-	// Mark-paid, View order, and Refund can appear; order them per
-	// canonical (mark-paid → view-order → refund).
+	// Mark-paid (canonical 5), View order (canonical 8), and Refund
+	// (canonical 9) can appear; order them per canonical so the
+	// inline row tracks the kebab and the list.
 	const actions = [
 		can.mark_paid && {
 			id: 'mark-paid',
@@ -1272,10 +1277,44 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 	// central, always-discoverable list of entity actions and
 	// intentionally overlaps with the inline buttons on the Booking
 	// details / Payment cards. Gating uses the same `can.*` flags so
-	// a single source of truth drives every surface.
+	// a single source of truth drives every surface — except Confirm
+	// and Refuse, which are gated directly on `booking.status` since
+	// they only apply to pending-confirmation bookings (matching the
+	// list-view action eligibility in app.js).
 	const canReschedule = isRescheduleEligible( booking );
+	const isPending = booking.status === 'pending-confirmation';
 
 	const controls = [
+		isPending && {
+			title: __( 'Confirm', 'woocommerce-bookings' ),
+			onClick: () =>
+				run( {
+					id: 'confirm',
+					endpoint: 'bookings/confirm',
+					successMessage: __(
+						'Booking confirmed.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
+		isPending && {
+			title: __( 'Refuse', 'woocommerce-bookings' ),
+			// Refuse routes through the cancel endpoint server-side
+			// (the list-view action does the same) — refusing a
+			// pending-confirmation booking is just a cancel with
+			// different semantics from the merchant's point of view.
+			onClick: () =>
+				run( {
+					id: 'refuse',
+					endpoint: 'bookings/cancel',
+					successMessage: __(
+						'Booking refused.',
+						'woocommerce-bookings'
+					),
+				} ),
+			isDisabled: busy,
+		},
 		can.mark_attended && {
 			title: __( 'Mark as attended', 'woocommerce-bookings' ),
 			onClick: () =>

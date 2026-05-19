@@ -299,11 +299,16 @@ export default function App() {
 	// the relative ordering is identical. New actions slot into this
 	// sequence so the user can build muscle memory.
 	//
-	//   1. Mark as attended
-	//   2. Mark as unattended
-	//   3. Mark as paid
-	//   4. Confirm
-	//   5. Refuse
+	// Confirm + Refuse lead the list because they're the most
+	// time-sensitive: a pending booking is held against availability
+	// until the merchant decides, so resolving that decision quickly
+	// is the merchant's most important workflow.
+	//
+	//   1. Confirm
+	//   2. Refuse
+	//   3. Mark as attended
+	//   4. Mark as unattended
+	//   5. Mark as paid
 	//   6. Reschedule
 	//   7. View booking
 	//   8. View order
@@ -311,6 +316,33 @@ export default function App() {
 	//  10. Cancel
 	const actions = useMemo(
 		() => [
+			{
+				id: 'confirm',
+				label: __( 'Confirm', 'woocommerce-bookings' ),
+				supportsBulk: true,
+				isEligible: ( item ) => item?.status === 'pending-confirmation',
+				callback: ( items ) => {
+					apiFetch( {
+						path: REST_BASE + 'bookings/confirm',
+						method: 'POST',
+						data: { ids: items.map( ( i ) => i.id ) },
+					} ).then( () => setRefreshToken( ( n ) => n + 1 ) ).catch( () => {} );
+				},
+			},
+			{
+				id: 'refuse',
+				label: __( 'Refuse', 'woocommerce-bookings' ),
+				isDestructive: true,
+				supportsBulk: true,
+				isEligible: ( item ) => item?.status === 'pending-confirmation',
+				callback: ( items ) => {
+					apiFetch( {
+						path: REST_BASE + 'bookings/cancel',
+						method: 'POST',
+						data: { ids: items.map( ( i ) => i.id ) },
+					} ).then( () => setRefreshToken( ( n ) => n + 1 ) ).catch( () => {} );
+				},
+			},
 			{
 				id: 'mark-attended',
 				label: __( 'Mark as attended', 'woocommerce-bookings' ),
@@ -377,33 +409,6 @@ export default function App() {
 						} );
 				},
 			},
-			{
-				id: 'confirm',
-				label: __( 'Confirm', 'woocommerce-bookings' ),
-				supportsBulk: true,
-				isEligible: ( item ) => item?.status === 'pending-confirmation',
-				callback: ( items ) => {
-					apiFetch( {
-						path: REST_BASE + 'bookings/confirm',
-						method: 'POST',
-						data: { ids: items.map( ( i ) => i.id ) },
-					} ).then( () => setRefreshToken( ( n ) => n + 1 ) ).catch( () => {} );
-				},
-			},
-			{
-				id: 'refuse',
-				label: __( 'Refuse', 'woocommerce-bookings' ),
-				isDestructive: true,
-				supportsBulk: true,
-				isEligible: ( item ) => item?.status === 'pending-confirmation',
-				callback: ( items ) => {
-					apiFetch( {
-						path: REST_BASE + 'bookings/cancel',
-						method: 'POST',
-						data: { ids: items.map( ( i ) => i.id ) },
-					} ).then( () => setRefreshToken( ( n ) => n + 1 ) ).catch( () => {} );
-				},
-			},
 			buildRescheduleAction( {
 				onSuccess: () => setRefreshToken( ( n ) => n + 1 ),
 			} ),
@@ -411,10 +416,10 @@ export default function App() {
 				// View booking is the row's quick-access action: it
 				// surfaces as a hover-revealed icon button next to the
 				// kebab (DataViews' `isPrimary` rendering). It is also
-				// hidden from the kebab dropdown via SCSS to avoid
-				// duplicating the inline button — see the rule for
-				// `.dataviews-item-actions` in style.scss. The canonical
-				// order still slots View booking at position 6 for any
+				// hidden from the kebab dropdown via the marker class
+				// set by `startRowActionsMenuMarker()` in index.js, to
+				// avoid duplicating the inline button. The canonical
+				// order still slots View booking at position 7 for any
 				// future surface that lists every action.
 				id: 'view-booking',
 				label: __( 'View booking', 'woocommerce-bookings' ),
