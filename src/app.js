@@ -440,7 +440,11 @@ export default function App() {
 			{
 				id: 'refund',
 				label: __( 'Refund', 'woocommerce-bookings' ),
-				isEligible: ( item ) => !! item?.order,
+				// Refund is only meaningful once the order has actually
+				// been paid — WC's refund form just shows "$0.00 available"
+				// otherwise. Gate on `order.date_paid` so the action
+				// disappears from the kebab for unpaid / pending orders.
+				isEligible: ( item ) => !! item?.order?.date_paid,
 				// Defer to WooCommerce's existing refund UI on the order
 				// edit screen rather than duplicating the flow. The hash
 				// is picked up by WC_Bookings_DataViews_Refund_Redirect,

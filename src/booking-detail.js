@@ -826,7 +826,10 @@ function BookingOrderActionsButtons( { item } ) {
 	const { pending, run } = useBookingActionRunner( item.id );
 	const can = item.can || {};
 	const orderUrl = item.order?.edit_url;
-	const canRefund = !! item.order;
+	// Server gates Refund on `order.date_paid` — see `shape_booking_detail`
+	// in the REST controller. Honor the same flag here so the inline
+	// button matches the header kebab and the list-view action.
+	const canRefund = !! can.refund;
 
 	// Canonical action order (see app.js). On the Payment card only
 	// Mark-paid, View order, and Refund can appear; order them per
@@ -1324,7 +1327,7 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 			},
 			isDisabled: busy,
 		},
-		!! booking.order && orderUrl && {
+		!! can.refund && orderUrl && {
 			title: __( 'Refund', 'woocommerce-bookings' ),
 			// See app.js / BookingOrderActionsButtons for the same
 			// pattern: redirect to the booking's order edit screen with

@@ -698,6 +698,11 @@ class WC_Bookings_DataViews_REST {
 			// drives the inline button + kebab visibility on the detail
 			// page server-side.
 			'reschedule'       => ! in_array( $booking->get_status(), array( 'cancelled', 'complete', 'failed', 'in-cart' ), true ),
+			// Refund is only meaningful once the order has actually been
+			// paid — WC's refund form just shows "$0.00 available" when
+			// `date_paid` is empty. Gate on it so the action disappears
+			// across every surface for unpaid orders.
+			'refund'           => ! empty( $base['order']['date_paid'] ),
 		);
 
 		return $base;
