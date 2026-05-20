@@ -570,6 +570,14 @@ class WC_Bookings_DataViews_REST {
 			// them — empty array signals "skip the dropdown".
 			$base['product']['booking_duration']      = (int) $product->get_duration();
 			$base['product']['booking_duration_unit'] = (string) $product->get_duration_unit();
+			// Whether the product needs a start+end date pair rather than a
+			// single date. `is_range_picker_enabled()` returns true only
+			// when all four conditions hold (admin flag on, unit is day or
+			// month, duration_type is `customer`, base duration is 1), so
+			// the client can use this as a direct switch between the
+			// single-date and date-range calendar without recomputing the
+			// rule.
+			$base['product']['requires_date_range']   = $product->is_range_picker_enabled();
 			$resources_list                   = array();
 			if ( $product->has_resources() ) {
 				foreach ( $product->get_resources() as $res ) {

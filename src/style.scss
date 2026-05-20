@@ -682,6 +682,14 @@ body.wc_booking_page_wc-bookings-dataviews {
 	flex: 0 0 auto;
 }
 
+// In range mode there's no slots column to share space with — let
+// the calendar fill the modal width and center horizontally so the
+// two-month layout (which `DateRangeCalendar` defaults to in CIAB)
+// has room to breathe instead of sitting flush-left.
+.woocommerce-bookings-schedule-form--range {
+	justify-content: center;
+}
+
 .woocommerce-bookings-schedule-form__divider {
 	width: 1px;
 	background: #dcdcde;

@@ -57,11 +57,14 @@ import { unlock } from './utils/private-apis';
 import { useBookingScheduleCalendar } from './hooks/use-booking-schedule-calendar';
 import { useScrollFade } from './hooks/use-scroll-fade';
 
-// Same pattern CIAB uses: pull `DateCalendar` out of @wordpress/components'
-// privateApis. The public `DatePicker` is the legacy component and doesn't
-// share CIAB's SCSS contract (different DOM, different class names, smaller
-// day buttons). See ./utils/private-apis.js for the impersonation rationale.
-const { DateCalendar } = unlock( componentsPrivateApis );
+// Same pattern CIAB uses: pull `DateCalendar` (single-day picker) and
+// `DateRangeCalendar` (start+end day picker) out of @wordpress/components'
+// privateApis. We switch between them based on `product.requires_date_range`,
+// which the REST shape derives from `WC_Product_Booking::is_range_picker_enabled()`.
+// The public `DatePicker` is the legacy component and doesn't share CIAB's
+// SCSS contract (different DOM, different class names, smaller day buttons).
+// See ./utils/private-apis.js for the impersonation rationale.
+const { DateCalendar, DateRangeCalendar } = unlock( componentsPrivateApis );
 
 const REST_BASE = window.WC_BOOKINGS_DATAVIEWS_DATA?.restUrl || '';
 
@@ -109,6 +112,27 @@ export function RescheduleBookingForm( { booking, onClose, onSuccess } ) {
 		() => new Date( Number( booking.end ) * 1000 ),
 		[ booking.end ]
 	);
+
+	// Switch between single-day-+-time-slot mode (default) and date-range
+	// mode (day/month-based bookings whose product opts into the range
+	// picker). Drives both the calendar (DateCalendar vs DateRangeCalendar)
+	// and the slot column (hidden in range mode — there are no per-day
+	// time slots for whole-day bookings). The server-side gate is
+	// `WC_Product_Booking::is_range_picker_enabled()` — see
+	// `shape_booking_detail` in the REST controller.
+	const requiresRange = !! product.requires_date_range;
+
+	// Range mode tracks a {from, to} pair instead of a single selected
+	// date + slot. Seed it with the booking's current span so the
+	// submit button is immediately actionable (the user can confirm a
+	// no-change reschedule, or extend/shift the range from this baseline).
+	// `DateRangeCalendar` uses `to: undefined` mid-selection (after the
+	// user clicks `from` but before clicking `to`), so we honor undefined
+	// downstream instead of forcing a fallback.
+	const [ selectedRange, setSelectedRange ] = useState( () => ( {
+		from: bookingDate,
+		to: bookingEndDate,
+	} ) );
 
 	const {
 		visibleMonth,
@@ -180,29 +204,68 @@ export function RescheduleBookingForm( { booking, onClose, onSuccess } ) {
 	}, [ availableSlots, selectedSlot, slotsListRef ] );
 
 	const onReschedule = useCallback( async () => {
-		if ( ! selectedSlot || ! selectedDate ) {
-			void createErrorNotice(
-				__( 'Please select a time slot.', 'woocommerce-bookings' ),
-				{ type: 'snackbar' }
+		let start;
+		let end;
+		let newDayKey;
+		let newSlotKey;
+		let newAnchorDate;
+
+		if ( requiresRange ) {
+			// Range mode: the picked from/to dates are whole days, so
+			// start at 00:00 of the from-day and end at 00:00 of the
+			// day *after* the to-day. The half-open interval matches
+			// the existing day-based bookings (e.g. a single-day "1-day"
+			// booking spans midnight to next midnight) so the rendered
+			// duration in the UI stays consistent.
+			if ( ! selectedRange?.from || ! selectedRange?.to ) {
+				void createErrorNotice(
+					__(
+						'Please select a start and end date.',
+						'woocommerce-bookings'
+					),
+					{ type: 'snackbar' }
+				);
+				return;
+			}
+			const fromDay = new Date( selectedRange.from );
+			fromDay.setHours( 0, 0, 0, 0 );
+			const endExclusive = new Date( selectedRange.to );
+			endExclusive.setHours( 0, 0, 0, 0 );
+			endExclusive.setDate( endExclusive.getDate() + 1 );
+			start = Math.floor( fromDay.getTime() / 1000 );
+			end = Math.floor( endExclusive.getTime() / 1000 );
+			newAnchorDate = fromDay;
+			newDayKey = getDayKey( fromDay );
+			newSlotKey = formatSlotKey( fromDay );
+		} else {
+			if ( ! selectedSlot || ! selectedDate ) {
+				void createErrorNotice(
+					__( 'Please select a time slot.', 'woocommerce-bookings' ),
+					{ type: 'snackbar' }
+				);
+				return;
+			}
+			const slotDate = buildSlotDateTime(
+				selectedDate,
+				selectedSlot
 			);
-			return;
+			start = Math.floor( slotDate.getTime() / 1000 );
+			end = Math.floor(
+				calculateEndDate(
+					slotDate,
+					product.booking_duration || 1,
+					product.booking_duration_unit || 'minute'
+				).getTime() / 1000
+			);
+			newAnchorDate = selectedDate;
+			newDayKey = getDayKey( selectedDate );
+			newSlotKey = selectedSlot;
 		}
 
 		setIsBusy( true );
 
-		const slotDate = buildSlotDateTime( selectedDate, selectedSlot );
-		const start = Math.floor( slotDate.getTime() / 1000 );
-		const end = Math.floor(
-			calculateEndDate(
-				slotDate,
-				product.booking_duration || 1,
-				product.booking_duration_unit || 'minute'
-			).getTime() / 1000
-		);
-
 		const oldDayKey = getDayKey( bookingDate );
 		const oldSlotTime = formatSlotKey( bookingDate );
-		const newDayKey = getDayKey( selectedDate );
 
 		const payload = { start, end };
 		if ( resourceId && resourceId > 0 ) {
@@ -220,9 +283,9 @@ export function RescheduleBookingForm( { booking, onClose, onSuccess } ) {
 				oldDayKey,
 				oldSlotTime,
 				newDayKey,
-				selectedSlot,
+				newSlotKey,
 				bookingDate,
-				selectedDate,
+				newAnchorDate,
 				Number( booking.product_id || product.id ),
 				booking.resource_id || null
 			);
@@ -248,6 +311,8 @@ export function RescheduleBookingForm( { booking, onClose, onSuccess } ) {
 			setIsBusy( false );
 		}
 	}, [
+		requiresRange,
+		selectedRange,
 		selectedSlot,
 		selectedDate,
 		bookingDate,
@@ -272,17 +337,28 @@ export function RescheduleBookingForm( { booking, onClose, onSuccess } ) {
 					{ __( 'Reschedule booking', 'woocommerce-bookings' ) }
 				</Heading>
 				<Text variant="muted">
-					{ sprintf(
-						/* translators: 1: service / product name, 2: booking date, 3: booking start time, 4: booking end time */
-						__(
-							'%1$s is currently scheduled for: %2$s · %3$s - %4$s. Select a new time to reschedule this booking.',
-							'woocommerce-bookings'
-						),
-						product.title || '',
-						formatDateString( bookingDate ),
-						formatTimeString( bookingDate ),
-						formatTimeString( bookingEndDate )
-					) }
+					{ requiresRange
+						? sprintf(
+								/* translators: 1: service / product name, 2: booking start date, 3: booking end date */
+								__(
+									'%1$s is currently scheduled from %2$s to %3$s. Select a new date range to reschedule this booking.',
+									'woocommerce-bookings'
+								),
+								product.title || '',
+								formatDateString( bookingDate ),
+								formatDateString( bookingEndDate )
+						  )
+						: sprintf(
+								/* translators: 1: service / product name, 2: booking date, 3: booking start time, 4: booking end time */
+								__(
+									'%1$s is currently scheduled for: %2$s · %3$s - %4$s. Select a new time to reschedule this booking.',
+									'woocommerce-bookings'
+								),
+								product.title || '',
+								formatDateString( bookingDate ),
+								formatTimeString( bookingDate ),
+								formatTimeString( bookingEndDate )
+						  ) }
 				</Text>
 			</Stack>
 
@@ -298,70 +374,101 @@ export function RescheduleBookingForm( { booking, onClose, onSuccess } ) {
 				/>
 			) }
 
-			<div className="woocommerce-bookings-schedule-form">
+			<div
+				className={
+					requiresRange
+						? 'woocommerce-bookings-schedule-form woocommerce-bookings-schedule-form--range'
+						: 'woocommerce-bookings-schedule-form'
+				}
+			>
 				<div className="woocommerce-bookings-schedule-form__calendar">
-					<DateCalendar
-						startMonth={ currentMonthStart }
-						defaultSelected={ today }
-						selected={ selectedDate }
-						onSelect={ ( _selected, triggerDate ) =>
-							handleDateSelect( triggerDate )
-						}
-						month={ visibleMonth }
-						onMonthChange={ handleMonthChange }
-						disabled={ isDateDisabled }
-					/>
+					{ requiresRange ? (
+						<DateRangeCalendar
+							startMonth={ currentMonthStart }
+							selected={ selectedRange }
+							onSelect={ ( range ) =>
+								setSelectedRange( range )
+							}
+							month={ visibleMonth }
+							onMonthChange={ handleMonthChange }
+							disabled={ isDateDisabled }
+							excludeDisabled
+						/>
+					) : (
+						<DateCalendar
+							startMonth={ currentMonthStart }
+							defaultSelected={ today }
+							selected={ selectedDate }
+							onSelect={ ( _selected, triggerDate ) =>
+								handleDateSelect( triggerDate )
+							}
+							month={ visibleMonth }
+							onMonthChange={ handleMonthChange }
+							disabled={ isDateDisabled }
+						/>
+					) }
 				</div>
-				<div
-					className="woocommerce-bookings-schedule-form__divider"
-					aria-hidden="true"
-				/>
-				<div className="woocommerce-bookings-schedule-form__slots">
-					{ isLoadingSlots && (
-						<div className="woocommerce-bookings-schedule-form__slots-loading">
-							<Spinner />
-						</div>
-					) }
-					{ ! isLoadingSlots && availableSlots.length === 0 && (
-						<Text variant="muted">
-							{ __(
-								'No available time slots for this date.',
-								'woocommerce-bookings'
-							) }
-						</Text>
-					) }
-					{ ! isLoadingSlots && availableSlots.length > 0 && (
+				{ /* Slots column only makes sense for time-of-day pickers.
+				     Day/month-based bookings (requiresRange) don't have
+				     per-day time slots — the whole day is booked. Skip
+				     the divider + slots entirely in that case so the
+				     calendar can occupy the full modal width. */ }
+				{ ! requiresRange && (
+					<>
 						<div
-							className="woocommerce-bookings-schedule-form__slots-fade"
-							ref={ slotsFadeRef }
-						>
-							<div
-								className="woocommerce-bookings-schedule-form__slots-list"
-								ref={ slotsListRef }
-							>
-								{ availableSlots.map( ( slot ) => (
-									<Button
-										key={ slot }
-										size="default"
-										variant="outline"
-										tone={
-											selectedSlot === slot
-												? 'brand'
-												: 'neutral'
-										}
-										onClick={ () =>
-											setSelectedSlot( slot )
-										}
-										disabled={ isBusy }
-										className="woocommerce-bookings-schedule-form__slots-list__button"
+							className="woocommerce-bookings-schedule-form__divider"
+							aria-hidden="true"
+						/>
+						<div className="woocommerce-bookings-schedule-form__slots">
+							{ isLoadingSlots && (
+								<div className="woocommerce-bookings-schedule-form__slots-loading">
+									<Spinner />
+								</div>
+							) }
+							{ ! isLoadingSlots &&
+								availableSlots.length === 0 && (
+									<Text variant="muted">
+										{ __(
+											'No available time slots for this date.',
+											'woocommerce-bookings'
+										) }
+									</Text>
+								) }
+							{ ! isLoadingSlots &&
+								availableSlots.length > 0 && (
+									<div
+										className="woocommerce-bookings-schedule-form__slots-fade"
+										ref={ slotsFadeRef }
 									>
-										{ formatSlotTimeRange( slot ) }
-									</Button>
-								) ) }
-							</div>
+										<div
+											className="woocommerce-bookings-schedule-form__slots-list"
+											ref={ slotsListRef }
+										>
+											{ availableSlots.map( ( slot ) => (
+												<Button
+													key={ slot }
+													size="default"
+													variant="outline"
+													tone={
+														selectedSlot === slot
+															? 'brand'
+															: 'neutral'
+													}
+													onClick={ () =>
+														setSelectedSlot( slot )
+													}
+													disabled={ isBusy }
+													className="woocommerce-bookings-schedule-form__slots-list__button"
+												>
+													{ formatSlotTimeRange( slot ) }
+												</Button>
+											) ) }
+										</div>
+									</div>
+								) }
 						</div>
-					) }
-				</div>
+					</>
+				) }
 			</div>
 
 			<Stack direction="row" justify="flex-end" gap="sm">
@@ -380,7 +487,12 @@ export function RescheduleBookingForm( { booking, onClose, onSuccess } ) {
 						'Rescheduling booking',
 						'woocommerce-bookings'
 					) }
-					disabled={ isBusy || ! selectedSlot }
+					disabled={
+						isBusy ||
+						( requiresRange
+							? ! selectedRange?.from || ! selectedRange?.to
+							: ! selectedSlot )
+					}
 				>
 					{ __( 'Reschedule', 'woocommerce-bookings' ) }
 				</Button>
