@@ -1,57 +1,37 @@
-# WooCommerce Bookings — DataViews
+# WooCommerce Bookings DataViews
 
-A WordPress mini-extension that adds a DataViews-powered "All Bookings" admin screen to WooCommerce Bookings, behind a feature flag.
+A mini extension that replaces the WooCommerce Bookings admin list with a modern [DataViews](https://developer.wordpress.org/block-editor/reference-guides/packages/packages-dataviews/) interface. Installs on top of WooCommerce Bookings.
+
+## What it does
+
+Replaces the legacy bookings table with a DataViews-powered list featuring:
+
+- Tabs for Today, Upcoming, Past, Canceled and All bookings
+- Filtering by status, product, resource and date
+- Search, sorting, pagination and bulk actions
+- Actions: Confirm, Refuse, Cancel, Edit, View Order
 
 ## Requirements
 
-- WooCommerce
+- WordPress 6.3+
+- WooCommerce 8.2+
 - WooCommerce Bookings
-- WordPress 6.5+
-- PHP 7.4+
-- Node 20+ (for development only)
 
-## Install & build (from source)
+## Installation
 
-```bash
-npm install
-npm run build
-```
+1. Download `woocommerce-bookings-dataviews.zip` from the latest release
+2. Go to WP Admin, Plugins, Add New, Upload Plugin
+3. Upload the ZIP and activate
 
-Then activate the plugin in `wp-admin → Plugins`.
+## Enabling the feature
 
-## Install (from a zip)
-
-```bash
-npm install
-npm run build
-npm run plugin-zip
-```
-
-This produces `woocommerce-bookings-dataviews.zip` which can be uploaded via `wp-admin → Plugins → Add New → Upload Plugin`.
+The new UI is behind a feature flag. Go to **WooCommerce → Bookings → Settings → Features** and toggle the **All Bookings (DataViews)** option.
 
 ## Development
 
 ```bash
-npm run start
+npm install
+npm run start       # watch mode
+npm run build       # production build
+npm run plugin-zip  # generate installable ZIP
 ```
-
-Watches `src/` for changes and rebuilds incrementally.
-
-## Enabling the feature
-
-Once activated, go to `WooCommerce → Bookings → Settings → Features` and toggle **All Bookings (DataViews)**. The classic "All bookings" submenu is replaced with the DataViews-powered version.
-
-## What's inside
-
-| Path | Purpose |
-| --- | --- |
-| `woocommerce-bookings-dataviews.php` | Plugin bootstrap — defines constants and wires up the classes on `plugins_loaded` |
-| `includes/admin/class-wc-bookings-features.php` | Feature-flag plumbing + `Settings → Features` tab |
-| `includes/admin/class-wc-bookings-dataviews-menu.php` | Registers the DataViews submenu, removes the classic list |
-| `includes/admin/class-wc-bookings-dataviews-page.php` | Renders the page shell, enqueues the React bundle |
-| `includes/admin/class-wc-bookings-dataviews-rest.php` | REST endpoints under `wc-bookings/v1/dataviews/*` |
-| `src/index.js` | Entry point — mounts the React app |
-| `src/app.js` | The DataViews component, tabs, filters, actions |
-| `src/fields.js` | Field definitions (columns, filter elements, renderers) |
-| `src/style.scss` | Page-scoped styles |
-| `build/` | Output of `npm run build` (gitignored) |

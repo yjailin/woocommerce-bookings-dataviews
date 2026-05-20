@@ -38,9 +38,12 @@ function wc_bookings_dataviews_bootstrap() {
 	require_once WC_BOOKINGS_DATAVIEWS_PATH . 'includes/admin/class-wc-bookings-dataviews-rest.php';
 	require_once WC_BOOKINGS_DATAVIEWS_PATH . 'includes/admin/class-wc-bookings-dataviews-page.php';
 	require_once WC_BOOKINGS_DATAVIEWS_PATH . 'includes/admin/class-wc-bookings-dataviews-menu.php';
+	require_once WC_BOOKINGS_DATAVIEWS_PATH . 'includes/admin/class-wc-bookings-dataviews-url-router.php';
+	require_once WC_BOOKINGS_DATAVIEWS_PATH . 'includes/admin/class-wc-bookings-dataviews-refund-redirect.php';
 
 	if ( WC_Bookings_Features::is_enabled( WC_Bookings_Features::FEATURE_DATAVIEWS ) ) {
 		new WC_Bookings_DataViews_REST();
+		new WC_Bookings_DataViews_URL_Router();
 	}
 
 	if ( is_admin() ) {
@@ -49,6 +52,7 @@ function wc_bookings_dataviews_bootstrap() {
 		if ( WC_Bookings_Features::is_enabled( WC_Bookings_Features::FEATURE_DATAVIEWS ) ) {
 			new WC_Bookings_DataViews_Menu();
 			new WC_Bookings_DataViews_Page();
+			new WC_Bookings_DataViews_Refund_Redirect();
 		}
 	}
 }
