@@ -98,8 +98,7 @@ body.wp-admin {
 	.dataviews-view-table col.dataviews-view-table__col-num_of_persons { width: 70px; }
 	.dataviews-view-table col.dataviews-view-table__col-customer { width: 130px; }
 	.dataviews-view-table col.dataviews-view-table__col-order { width: 100px; }
-	.dataviews-view-table col.dataviews-view-table__col-booking_status { width: 110px; }
-	.dataviews-view-table col.dataviews-view-table__col-attendance_status { width: 110px; }
+	.dataviews-view-table col.dataviews-view-table__col-state { width: 110px; }
 	.dataviews-view-table col.dataviews-view-table__col-status { width: 100px; }
 	.dataviews-view-table col.dataviews-view-table__col-total { width: 90px; }
 	.dataviews-view-table col.dataviews-view-table__col-actions { width: 110px; }
@@ -428,11 +427,11 @@ body.wc_booking_page_wc-bookings-dataviews {
 	padding-top: 17px;
 
 	/* Hide the bare em-dash placeholder some field renders fall back to
-	   when there's no value (e.g. attendance with no recorded state).
-	   The dash sits next to the card chevron and reads as noise. We
-	   only target unstyled spans that are the only child of the
-	   summary slot — real values render as Badges or composite nodes
-	   with their own classNames, so they're not affected. */
+	   when there's no value (e.g. payment status with no order). The
+	   dash sits next to the card chevron and reads as noise. We only
+	   target unstyled spans that are the only child of the summary
+	   slot — real values render as Badges or composite nodes with their
+	   own classNames, so they're not affected. */
 	.dataforms-layouts-card__field-summary > span:only-child:not([class]) {
 		display: none;
 	}

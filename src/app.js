@@ -44,13 +44,12 @@ const TAB_DEFAULT_SORT = {
 // `id` is the title field (rendered separately via renderItemLink) and is
 // not in this list.
 const CANONICAL_FIELD_ORDER = [
-	'booking_status',
+	'state',
 	'resource',
 	'customer',
 	'num_of_persons',
 	'start_date',
 	'end_date',
-	'attendance_status',
 	'payment_status',
 	'order',
 	'total',
@@ -68,12 +67,11 @@ const DEFAULTS = {
 	// but kept adjacent to their pair (start_date / payment_status) in
 	// `CANONICAL_FIELD_ORDER` so they land in the right place when enabled.
 	fields: [
-		'booking_status',
+		'state',
 		'resource',
 		'customer',
 		'num_of_persons',
 		'start_date',
-		'attendance_status',
 		'payment_status',
 		'total',
 		'product',
@@ -132,9 +130,41 @@ dispatch( preferencesStore ).setDefaults( PREFS_SCOPE, {
 	[ VIEW_PREF ]: DEFAULTS,
 	[ TAB_PREF ]: 'upcoming',
 } );
-const persistenceReady = dispatch( preferencesStore ).setPersistenceLayer(
-	createPersistenceLayer()
-);
+
+// One-shot migration: the experimental Status+Attendance merge replaced the
+// `booking_status` and `attendance_status` field IDs with a single `state`.
+// Users who interacted with the list before the merge have those stale IDs
+// persisted, and DataViews silently drops unknown fields — leaving the new
+// State column hidden (and its filter UI orphaned). Translate the ids here
+// so the column reappears on the next render without a manual reset.
+function migrateView( view ) {
+	if ( ! view || ! Array.isArray( view.fields ) ) {
+		return view;
+	}
+	const STALE = [ 'booking_status', 'attendance_status' ];
+	if ( ! view.fields.some( ( f ) => STALE.includes( f ) ) ) {
+		return view;
+	}
+	const seen = new Set();
+	const migrated = [];
+	for ( const f of view.fields ) {
+		const next = STALE.includes( f ) ? 'state' : f;
+		if ( seen.has( next ) ) continue;
+		seen.add( next );
+		migrated.push( next );
+	}
+	return { ...view, fields: migrated };
+}
+
+const persistenceReady = dispatch( preferencesStore )
+	.setPersistenceLayer( createPersistenceLayer() )
+	.then( () => {
+		const persisted = select( preferencesStore ).get( PREFS_SCOPE, VIEW_PREF );
+		const migrated = migrateView( persisted );
+		if ( migrated !== persisted ) {
+			dispatch( preferencesStore ).set( PREFS_SCOPE, VIEW_PREF, migrated );
+		}
+	} );
 
 function firstFilterValue( filters, field ) {
 	const f = ( filters || [] ).find( ( x ) => x.field === field );
@@ -163,8 +193,8 @@ function buildParams( view, tab ) {
 	}
 	const paymentStatus = firstFilterValue( view.filters, 'payment_status' );
 	if ( paymentStatus ) params.payment_status = paymentStatus;
-	const bookingStatus = firstFilterValue( view.filters, 'booking_status' );
-	if ( bookingStatus ) params.status = bookingStatus;
+	const state = firstFilterValue( view.filters, 'state' );
+	if ( state ) params.state = state;
 	const product = firstFilterValue( view.filters, 'product' );
 	if ( product ) params.product = product;
 	const resource = firstFilterValue( view.filters, 'resource' );
@@ -173,8 +203,6 @@ function buildParams( view, tab ) {
 	if ( startRange ) params.start_range = startRange;
 	const endRange = firstFilterValue( view.filters, 'end_date' );
 	if ( endRange ) params.end_range = endRange;
-	const attendance = firstFilterValue( view.filters, 'attendance_status' );
-	if ( attendance ) params.attendance = attendance;
 	if ( tab ) params.tab = tab;
 	return params;
 }
@@ -347,12 +375,16 @@ export default function App() {
 				id: 'mark-attended',
 				label: __( 'Mark as attended', 'woocommerce-bookings' ),
 				supportsBulk: true,
-				// CIAB shows the toggle regardless of past/future — merchant
-				// can pre-mark before the booking happens, mark during, or
-				// after. Just hide for cancelled and when already attended.
+				// Attendance is a post-start concept under our strict
+				// lifecycle rule — the State column never shows
+				// Attended/Unattended on future bookings, so the action
+				// must mirror that gate. Pre-marking writes invisible data
+				// and only confuses the merchant.
 				isEligible: ( item ) =>
 					item?.status !== 'cancelled' &&
-					item?.attendance_status !== 'attended',
+					item?.attendance_status !== 'attended' &&
+					Number( item?.start ) > 0 &&
+					Number( item.start ) <= Date.now() / 1000,
 				callback: ( items ) => {
 					apiFetch( {
 						path: REST_BASE + 'bookings/mark-attended',
@@ -365,9 +397,15 @@ export default function App() {
 				id: 'mark-unattended',
 				label: __( 'Mark as unattended', 'woocommerce-bookings' ),
 				supportsBulk: true,
+				// Past rows with no attendance recorded render as em-dash and
+				// can be resolved in either direction, so Mark as unattended
+				// is eligible whenever the current value isn't already
+				// 'unattended' (matches the inverse of Mark as attended).
 				isEligible: ( item ) =>
 					item?.status !== 'cancelled' &&
-					item?.attendance_status === 'attended',
+					item?.attendance_status !== 'unattended' &&
+					Number( item?.start ) > 0 &&
+					Number( item.start ) <= Date.now() / 1000,
 				callback: ( items ) => {
 					apiFetch( {
 						path: REST_BASE + 'bookings/mark-unattended',

@@ -37,7 +37,79 @@ const PAYMENT_OPTIONS = [
 	{ value: 'refunded', label: __( 'Refunded', 'woocommerce-bookings' ) },
 ];
 
-const ATTENDANCE_OPTIONS = [
+// State merges the old booking_status and attendance_status into a single
+// lifecycle-aware view:
+//   • Before start: Pending Confirmation / Confirmed / Canceled
+//   • At/after start: Pending Confirmation (if unresolved) / Attended /
+//     Unattended / Canceled, or em-dash until the merchant explicitly marks
+//     attendance.
+// Rules (cancelled always short-circuits — see filter logic in
+// class-wc-bookings-dataviews-rest.php for the matching server-side guard):
+//   • status='cancelled' → Canceled (any time, any attendance).
+//   • status='pending-confirmation' → Pending (persists across the start
+//     boundary because it's an unresolved state, not a lifecycle state).
+//   • Future bookings → Confirmed (attendance is invisible until start —
+//     pre-marks land in the DB but show no badge).
+//   • Past bookings → only show Attended/Unattended when attendance_status
+//     is explicitly set. Bookings with no attendance recorded render as
+//     em-dash; the merchant resolves them via Mark as attended / unattended.
+// The string values here double as filter keys and must match the server's
+// `?state=` parameter in class-wc-bookings-dataviews-rest.php.
+export function stateFor( item, nowSeconds = Date.now() / 1000 ) {
+	if ( ! item ) {
+		return null;
+	}
+	if ( item.status === 'cancelled' ) {
+		return 'cancelled';
+	}
+	if ( item.status === 'pending-confirmation' ) {
+		return 'pending-confirmation';
+	}
+	const start = Number( item.start ) || 0;
+	if ( start === 0 || start > nowSeconds ) {
+		return 'confirmed';
+	}
+	if ( item.attendance_status === 'attended' ) {
+		return 'attended';
+	}
+	if ( item.attendance_status === 'unattended' ) {
+		return 'unattended';
+	}
+	return null;
+}
+
+export const STATE_MAP = {
+	'pending-confirmation': {
+		label: __( 'Pending', 'woocommerce-bookings' ),
+		intent: 'low',
+	},
+	confirmed: {
+		label: __( 'Confirmed', 'woocommerce-bookings' ),
+		// `none` is the design-system-recommended intent for normal
+		// background states in dense lists (see
+		// @wordpress/ui/src/badge/stories/choosing-intent.mdx — "Approved →
+		// none" is the worked example). White-with-border keeps the
+		// Upcoming tab scannable without flooding the column with green.
+		intent: 'none',
+	},
+	cancelled: {
+		label: __( 'Canceled', 'woocommerce-bookings' ),
+		intent: 'informational',
+	},
+	attended: {
+		label: __( 'Attended', 'woocommerce-bookings' ),
+		intent: 'none',
+	},
+	unattended: {
+		label: __( 'Unattended', 'woocommerce-bookings' ),
+		intent: 'draft',
+	},
+};
+
+const STATE_OPTIONS = [
+	{ value: 'pending-confirmation', label: __( 'Pending', 'woocommerce-bookings' ) },
+	{ value: 'confirmed', label: __( 'Confirmed', 'woocommerce-bookings' ) },
+	{ value: 'cancelled', label: __( 'Canceled', 'woocommerce-bookings' ) },
 	{ value: 'attended', label: __( 'Attended', 'woocommerce-bookings' ) },
 	{ value: 'unattended', label: __( 'Unattended', 'woocommerce-bookings' ) },
 ];
@@ -66,30 +138,19 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 			render: ( { item } ) => `#${ item.id }`,
 		},
 		{
-			id: 'booking_status',
-			label: __( 'Status', 'woocommerce-bookings' ),
+			id: 'state',
+			label: __( 'State', 'woocommerce-bookings' ),
 			enableSorting: false,
-			elements: [
-				{ value: 'pending-confirmation', label: __( 'Pending', 'woocommerce-bookings' ) },
-				{ value: 'cancelled', label: __( 'Canceled', 'woocommerce-bookings' ) },
-			],
+			elements: STATE_OPTIONS,
 			filterBy: { operators: [ 'is' ] },
-			getValue: ( { item } ) => item.status,
-			// Only render a badge for non-default booking states.
-			// Active bookings (confirmed/paid/complete/etc.) don't get a
-			// dedicated badge — showing "Confirmed" on every row would be
-			// noise — but fall back to an em-dash so the cell isn't
-			// visually empty. Every other column in the list view uses
-			// the same em-dash placeholder for missing values; keep
-			// Status consistent rather than leaving a blank cell.
+			getValue: ( { item } ) => stateFor( item ) || '',
 			render: ( { item } ) => {
-				if ( item.status === 'cancelled' ) {
-					return h( Badge, { intent: 'informational' }, __( 'Canceled', 'woocommerce-bookings' ) );
+				const state = stateFor( item );
+				const map = state ? STATE_MAP[ state ] : null;
+				if ( ! map ) {
+					return h( 'span', null, '—' );
 				}
-				if ( item.status === 'pending-confirmation' ) {
-					return h( Badge, { intent: 'low' }, __( 'Pending', 'woocommerce-bookings' ) );
-				}
-				return h( 'span', null, '—' );
+				return h( Badge, { intent: map.intent }, map.label );
 			},
 		},
 		// Who
@@ -140,26 +201,6 @@ export function buildFields( { products = [], resources = [] } = {} ) {
 			render: ( { item } ) => h( 'span', null, item.end_date ),
 		},
 		// State / financial
-		{
-			id: 'attendance_status',
-			label: __( 'Attendance', 'woocommerce-bookings' ),
-			elements: ATTENDANCE_OPTIONS,
-			filterBy: { operators: [ 'is' ] },
-			getValue: ( { item } ) => item.attendance_status || 'unattended',
-			// Mirror CIAB: every non-cancelled booking shows an attendance
-			// badge — "Attended" once explicitly marked, "Unattended" by
-			// default (including for future bookings). Cancelled bookings
-			// render as "—" since attendance isn't meaningful for them.
-			render: ( { item } ) => {
-				if ( item.status === 'cancelled' ) {
-					return h( 'span', null, '—' );
-				}
-				if ( item.attendance_status === 'attended' ) {
-					return h( Badge, { intent: 'none' }, __( 'Attended', 'woocommerce-bookings' ) );
-				}
-				return h( Badge, { intent: 'draft' }, __( 'Unattended', 'woocommerce-bookings' ) );
-			},
-		},
 		{
 			id: 'payment_status',
 			label: __( 'Payment', 'woocommerce-bookings' ),

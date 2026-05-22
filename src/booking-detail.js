@@ -5,7 +5,9 @@
  * `woocommerce_bookings_next_register_default_view_config_for_booking()`:
  *
  *   Card 1 — "Booking details"     (always open)
- *     summary: attendance_status (visibility: always)
+ *     summary: state (visibility: always)  ← CIAB uses attendance_status here;
+ *                                            this plugin merges status +
+ *                                            attendance into a single State.
  *     children:
  *       booking-service-info               (panel, no label)
  *       booking-date-time                  (panel, label top)
@@ -67,7 +69,13 @@ import { useDispatch } from '@wordpress/data';
 import { store as noticesStore } from '@wordpress/notices';
 import { Icon, box, mapMarker, moreVertical } from '@wordpress/icons';
 import { __experimentalInputControl as InputControl } from '@wordpress/components';
-import { buildFields, paymentStateFor, PAYMENT_MAP } from './fields';
+import {
+	buildFields,
+	paymentStateFor,
+	PAYMENT_MAP,
+	stateFor,
+	STATE_MAP,
+} from './fields';
 import {
 	RescheduleBookingDialog,
 	isRescheduleEligible,
@@ -100,27 +108,15 @@ function getPaymentBadge( booking ) {
 	return PAYMENT_MAP[ state ] || null;
 }
 
-const ATTENDANCE_FIELD = buildFields().find(
-	( f ) => f.id === 'attendance_status'
-);
-
 function HeaderBadges( { booking } ) {
-	const isCancelled = booking.status === 'cancelled';
+	const state = stateFor( booking );
+	const sBadge = state ? STATE_MAP[ state ] : null;
 	const pBadge = getPaymentBadge( booking );
 
 	return (
 		<>
-			{ isCancelled ? (
-				<Badge intent="informational">
-					{ __( 'Canceled', 'woocommerce-bookings' ) }
-				</Badge>
-			) : (
-				ATTENDANCE_FIELD?.render && (
-					<ATTENDANCE_FIELD.render
-						item={ booking }
-						field={ ATTENDANCE_FIELD }
-					/>
-				)
+			{ sBadge && (
+				<Badge intent={ sBadge.intent }>{ sBadge.label }</Badge>
 			) }
 			{ pBadge && (
 				<Badge intent={ pBadge.intent }>{ pBadge.label }</Badge>
@@ -254,9 +250,16 @@ function useBookingActionRunner( bookingId ) {
 						window.location.href = action.redirectTo;
 						return;
 					}
-					createSuccessNotice( action.successMessage, {
-						type: 'snackbar',
-					} );
+					// Actions can opt out of a success snackbar by omitting
+					// `successMessage` — used for mark-attended /
+					// mark-unattended now that those are time-gated to
+					// post-start bookings, so the State column change is
+					// visible feedback on its own.
+					if ( action.successMessage ) {
+						createSuccessNotice( action.successMessage, {
+							type: 'snackbar',
+						} );
+					}
 					onRefresh();
 				} )
 				.catch( ( err ) => {
@@ -772,20 +775,13 @@ function BookingActionsButtons( { item } ) {
 			label: __( 'Mark as attended', 'woocommerce-bookings' ),
 			variant: 'outline',
 			endpoint: 'bookings/mark-attended',
-			successMessage: __(
-				'Booking marked as attended.',
-				'woocommerce-bookings'
-			),
+			// No successMessage — silent success, badge change is the feedback.
 		},
 		can.mark_unattended && {
 			id: 'mark-unattended',
 			label: __( 'Mark as unattended', 'woocommerce-bookings' ),
 			variant: 'outline',
 			endpoint: 'bookings/mark-unattended',
-			successMessage: __(
-				'Booking marked as unattended.',
-				'woocommerce-bookings'
-			),
 		},
 		canReschedule && {
 			id: 'reschedule',
@@ -931,14 +927,13 @@ const VISIBILITY_OVERRIDES = {
 /**
  * Build the field collection consumed by DataForm.
  *
- * • Drops attendance_status when the booking is cancelled (matches CIAB).
  * • Applies readOnly to base fields so DataForm uses `render` instead of
  *   trying to render an Edit control.
  * • Appends runtime composite renderers (service info, date-time, customer
  *   details, payment breakdown, note, plus the two action button groups).
  */
 // Detect the bare em-dash placeholder some field renders fall back to
-// when there's no value (e.g. attendance status, payment status). On the
+// when there's no value (e.g. payment status with no order). On the
 // list view we keep them — empty cells read as ambiguous — but in the
 // card summaries they sit next to the chevron and read as noise, so we
 // strip them here. Matches CIAB's behavior.
@@ -959,15 +954,8 @@ function stripEmDashRender( original ) {
 	};
 }
 
-function buildFormFields( bookingStatus ) {
+function buildFormFields() {
 	const base = buildFields()
-		.filter(
-			( f ) =>
-				! (
-					f.id === 'attendance_status' &&
-					bookingStatus === 'cancelled'
-				)
-		)
 		.map( ( f ) => {
 			const adapted = {
 				...f,
@@ -1103,7 +1091,7 @@ const FORM = {
 			layout: {
 				type: 'card',
 				summary: [
-					{ id: 'attendance_status', visibility: 'always' },
+					{ id: 'state', visibility: 'always' },
 				],
 			},
 			children: [
@@ -1321,10 +1309,7 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 				run( {
 					id: 'mark-attended',
 					endpoint: 'bookings/mark-attended',
-					successMessage: __(
-						'Booking marked as attended.',
-						'woocommerce-bookings'
-					),
+					// No successMessage — silent success.
 				} ),
 			isDisabled: busy,
 		},
@@ -1334,10 +1319,6 @@ function BookingHeaderActions( { booking, isDirty, isSaving, onSave } ) {
 				run( {
 					id: 'mark-unattended',
 					endpoint: 'bookings/mark-unattended',
-					successMessage: __(
-						'Booking marked as unattended.',
-						'woocommerce-bookings'
-					),
 				} ),
 			isDisabled: busy,
 		},
@@ -1483,10 +1464,7 @@ export default function BookingDetail( { bookingId } ) {
 		[ onRefresh, openReschedule ]
 	);
 
-	const formFields = useMemo(
-		() => buildFormFields( booking?.status ),
-		[ booking?.status ]
-	);
+	const formFields = useMemo( () => buildFormFields(), [] );
 
 	// Filter optional rows out of the details card when they have no data
 	// to display. `booking-resource` and `booking-person-counts` are both
