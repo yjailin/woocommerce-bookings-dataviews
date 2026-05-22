@@ -75,9 +75,9 @@ class WC_Bookings_DataViews_REST {
 						'default'           => 'desc',
 						'sanitize_callback' => 'sanitize_key',
 					),
-					'status'      => array(
+					'state'       => array(
 						'default'           => '',
-						'sanitize_callback' => 'sanitize_text_field',
+						'sanitize_callback' => 'sanitize_key',
 					),
 					'product'     => array(
 						'default'           => 0,
@@ -96,10 +96,6 @@ class WC_Bookings_DataViews_REST {
 						'sanitize_callback' => 'sanitize_key',
 					),
 					'tab'         => array(
-						'default'           => '',
-						'sanitize_callback' => 'sanitize_key',
-					),
-					'attendance'  => array(
 						'default'           => '',
 						'sanitize_callback' => 'sanitize_key',
 					),
@@ -339,14 +335,24 @@ class WC_Bookings_DataViews_REST {
 	/**
 	 * Mark bookings as attended.
 	 *
+	 * Skips future bookings — attendance is a post-start concept under the
+	 * strict State rule, and the column wouldn't reflect a pre-mark anyway.
+	 * Defense in depth for bulk requests where a future ID slips through
+	 * client-side eligibility.
+	 *
 	 * @param WP_REST_Request $request Request object.
 	 * @return WP_REST_Response
 	 */
 	public function mark_attended_bookings( WP_REST_Request $request ) {
-		$ids     = array_map( 'absint', array_filter( (array) $request['ids'] ) );
-		$updated = array();
+		$ids        = array_map( 'absint', array_filter( (array) $request['ids'] ) );
+		$updated    = array();
+		$now_ymdhis = ( new DateTimeImmutable( 'now', wp_timezone() ) )->format( 'YmdHis' );
 		foreach ( $ids as $id ) {
 			if ( 'wc_booking' !== get_post_type( $id ) ) {
+				continue;
+			}
+			$start = (string) get_post_meta( $id, '_booking_start', true );
+			if ( '' === $start || $start > $now_ymdhis ) {
 				continue;
 			}
 			// Go through the WC_Booking setter + save so the data store
@@ -368,14 +374,21 @@ class WC_Bookings_DataViews_REST {
 	/**
 	 * Mark bookings as unattended.
 	 *
+	 * Same future-booking guard as mark_attended_bookings.
+	 *
 	 * @param WP_REST_Request $request Request object.
 	 * @return WP_REST_Response
 	 */
 	public function mark_unattended_bookings( WP_REST_Request $request ) {
-		$ids     = array_map( 'absint', array_filter( (array) $request['ids'] ) );
-		$updated = array();
+		$ids        = array_map( 'absint', array_filter( (array) $request['ids'] ) );
+		$updated    = array();
+		$now_ymdhis = ( new DateTimeImmutable( 'now', wp_timezone() ) )->format( 'YmdHis' );
 		foreach ( $ids as $id ) {
 			if ( 'wc_booking' !== get_post_type( $id ) ) {
+				continue;
+			}
+			$start = (string) get_post_meta( $id, '_booking_start', true );
+			if ( '' === $start || $start > $now_ymdhis ) {
 				continue;
 			}
 			// Go through the WC_Booking setter + save (see mark_attended).
@@ -683,15 +696,25 @@ class WC_Bookings_DataViews_REST {
 		//   cancel:           allowed unless paid / completed / refunded / cancelled
 		//   mark_paid:        allowed unless already paid / refunded / cancelled
 		//                     ('complete' bookings can still need a missing payment recorded)
-		//   mark_attended:    allowed for any non-cancelled booking that
-		//                     isn't already marked attended (past or future)
-		//   mark_unattended:  allowed for any non-cancelled booking that
-		//                     is currently marked attended
+		//   mark_attended:    non-cancelled, not already attended, AND start
+		//                     time has passed. Pre-marking writes invisible
+		//                     data under the strict State rule, so the action
+		//                     is hidden until the booking has started.
+		//   mark_unattended:  non-cancelled, NOT already unattended, AND start
+		//                     time has passed. Past rows with no attendance
+		//                     recorded render as em-dash and the merchant
+		//                     can resolve them in either direction, so
+		//                     Mark as unattended is offered for both em-dash
+		//                     and attended values.
+		$start_meta   = (string) get_post_meta( $post->ID, '_booking_start', true );
+		$now_compare  = ( new DateTimeImmutable( 'now', wp_timezone() ) )->format( 'YmdHis' );
+		$start_passed = '' !== $start_meta && $start_meta <= $now_compare;
+
 		$base['can'] = array(
 			'cancel'           => ! in_array( $booking->get_status(), array( 'cancelled', 'paid', 'complete', 'refunded' ), true ),
 			'mark_paid'        => ! in_array( $booking->get_status(), array( 'paid', 'cancelled', 'refunded' ), true ),
-			'mark_attended'    => 'cancelled' !== $booking->get_status() && 'attended' !== $base['attendance_status'],
-			'mark_unattended'  => 'cancelled' !== $booking->get_status() && 'attended' === $base['attendance_status'],
+			'mark_attended'    => 'cancelled' !== $booking->get_status() && 'attended' !== $base['attendance_status'] && $start_passed,
+			'mark_unattended'  => 'cancelled' !== $booking->get_status() && 'unattended' !== $base['attendance_status'] && $start_passed,
 			'view_order'       => ! empty( $base['order'] ),
 			// Mirrors CIAB's reschedule isEligible. The JS side reads the
 			// same gating from `isRescheduleEligible(item)`; this flag
@@ -1166,18 +1189,17 @@ class WC_Bookings_DataViews_REST {
 		$search      = (string) $request['search'];
 		$orderby     = (string) $request['orderby'];
 		$order       = 'ASC' === strtoupper( (string) $request['order'] ) ? 'ASC' : 'DESC';
-		$status      = (string) $request['status'];
+		$state       = (string) $request['state'];
 		$product     = (int) $request['product'];
 		$resource    = (int) $request['resource'];
 		$start_range = (string) $request['start_range'];
 		$end_range   = (string) $request['end_range'];
 		$tab            = (string) $request['tab'];
-		$attendance     = (string) $request['attendance'];
 		$payment_status = (string) $request['payment_status'];
 
 		$args = array(
 			'post_type'      => 'wc_booking',
-			'post_status'    => $status ? array( $status ) : 'any',
+			'post_status'    => 'any',
 			'posts_per_page' => $per_page,
 			'paged'          => $page,
 		);
@@ -1360,43 +1382,71 @@ class WC_Bookings_DataViews_REST {
 			);
 		}
 
-		// Attendance filter. Mirrors the badge rule in fields.js exactly:
-		//   "Attended"   = `_booking_attendance_status` is explicitly 'attended'
-		//   "Unattended" = anything else (missing meta OR a value !== 'attended')
-		// Past-vs-future no longer matters — every non-cancelled booking
-		// shows one of the two badges, so the filter follows suit.
-		// Cancelled bookings show "—" (not a badge), so they're excluded
-		// from both filter results.
-		if ( 'attended' === $attendance || 'unattended' === $attendance ) {
-			// 'any' in WP_Query expands to every status where
-			// `exclude_from_search` is false. We replicate that set so the
-			// attendance filter doesn't accidentally widen visibility, then
-			// subtract `cancelled` (those rows show "—", not a badge).
-			if ( 'any' === $args['post_status'] ) {
-				$any_visible = get_post_stati( array( 'exclude_from_search' => false ), 'names' );
-				$args['post_status'] = array_values( array_diff( $any_visible, array( 'cancelled' ) ) );
-			} elseif ( is_array( $args['post_status'] ) ) {
-				$args['post_status'] = array_values( array_diff( $args['post_status'], array( 'cancelled' ) ) );
+		// State filter. Replaces the old separate `?status=` and `?attendance=`
+		// filters with a single lifecycle-aware filter. See `stateFor()` in
+		// src/fields.js for the matching display rules — every branch here
+		// returns the rows that the column will render with that label.
+		//
+		// Strict lifecycle: future bookings never appear under `attended` or
+		// `unattended` — those buckets only contain rows whose start has
+		// already passed. `attendance_status` pre-marks on future rows are
+		// stored but invisible (user confirmation comes via snackbar).
+		$state_post_statuses = null;
+		$state_meta_query    = array();
+		if ( $state ) {
+			$now_ymdhis             = ( new DateTimeImmutable( 'now', wp_timezone() ) )->format( 'YmdHis' );
+			$non_terminal_statuses  = array( 'unpaid', 'confirmed', 'paid', 'complete' );
+
+			switch ( $state ) {
+				case 'pending-confirmation':
+					$state_post_statuses = array( 'pending-confirmation' );
+					break;
+				case 'cancelled':
+					$state_post_statuses = array( 'cancelled' );
+					break;
+				case 'confirmed':
+					// Future bookings that aren't pending or cancelled.
+					$state_post_statuses = $non_terminal_statuses;
+					$state_meta_query[]  = array(
+						'key'     => '_booking_start',
+						'value'   => $now_ymdhis,
+						'compare' => '>',
+					);
+					break;
+				case 'attended':
+					// Past AND explicitly marked attended.
+					$state_post_statuses = $non_terminal_statuses;
+					$state_meta_query[]  = array(
+						'key'     => '_booking_start',
+						'value'   => $now_ymdhis,
+						'compare' => '<=',
+					);
+					$state_meta_query[]  = array(
+						'key'   => '_booking_attendance_status',
+						'value' => 'attended',
+					);
+					break;
+				case 'unattended':
+					// Past AND explicitly marked unattended. Missing/empty
+					// meta no longer defaults to unattended — those rows
+					// render as em-dash in the column until the merchant
+					// resolves them, so the filter follows the same rule.
+					$state_post_statuses = $non_terminal_statuses;
+					$state_meta_query[]  = array(
+						'key'     => '_booking_start',
+						'value'   => $now_ymdhis,
+						'compare' => '<=',
+					);
+					$state_meta_query[]  = array(
+						'key'   => '_booking_attendance_status',
+						'value' => 'unattended',
+					);
+					break;
 			}
-		}
-		if ( 'attended' === $attendance ) {
-			$meta_query[] = array(
-				'key'   => '_booking_attendance_status',
-				'value' => 'attended',
-			);
-		} elseif ( 'unattended' === $attendance ) {
-			$meta_query[] = array(
-				'relation' => 'OR',
-				array(
-					'key'     => '_booking_attendance_status',
-					'compare' => 'NOT EXISTS',
-				),
-				array(
-					'key'     => '_booking_attendance_status',
-					'value'   => 'attended',
-					'compare' => '!=',
-				),
-			);
+
+			foreach ( $state_meta_query as $clause ) {
+				$meta_query[] = $clause;
+			}
 		}
 
 		if ( $start_range ) {
@@ -1468,8 +1518,30 @@ class WC_Bookings_DataViews_REST {
 			}
 
 			if ( in_array( $tab, array( 'today', 'upcoming', 'past' ), true ) ) {
-				$default_statuses    = array( 'unpaid', 'pending-confirmation', 'confirmed', 'paid', 'complete' );
-				$args['post_status'] = $status ? array( $status ) : $default_statuses;
+				$args['post_status'] = array( 'unpaid', 'pending-confirmation', 'confirmed', 'paid', 'complete' );
+			}
+		}
+
+		// Apply the state filter's post_status constraint on top of the
+		// tab's. State always wins for a given booking's lifecycle bucket
+		// (e.g. on the past or canceled tab, filtering by an incompatible
+		// state yields zero results — those constraints contradict by
+		// design). Empty intersection is encoded as `post__in = [0]`
+		// because WP_Query silently DROPS `post_status` when the value
+		// is unknown to WordPress (no `register_post_status` match) —
+		// the resulting SQL has no post_status WHERE clause at all,
+		// which would leak every booking through. `post__in = [0]` is
+		// the only reliable zero-result encoding.
+		if ( null !== $state_post_statuses ) {
+			if ( 'any' === $args['post_status'] ) {
+				$args['post_status'] = $state_post_statuses;
+			} elseif ( is_array( $args['post_status'] ) ) {
+				$intersection = array_values( array_intersect( $args['post_status'], $state_post_statuses ) );
+				if ( empty( $intersection ) ) {
+					$args['post__in'] = array( 0 );
+				} else {
+					$args['post_status'] = $intersection;
+				}
 			}
 		}
 
