@@ -1,0 +1,307 @@
+/**
+ * Modal booking flow — styles.
+ *
+ * The dialog fills the viewport and centers its panel (mobile pins it
+ * to the bottom). The dim backdrop is INSTANT (no fade) so the page
+ * never shows through during the open transition. The PANEL animates
+ * in with a pure CSS `@keyframes` animation triggered by the dialog
+ * being `[open]` — no JS animation plumbing.
+ */
+
+.wc-bookings-modal-trigger-wrapper {
+	margin-top: 1em;
+	/* On a non-bookable / variable product (or a bookable product
+	 * with the modal flag OFF), the Add-to-Cart / Book-now button
+	 * lives inside `<form class="cart">`. WC core's woocommerce.css
+	 * ships `form.cart { margin-bottom: 2em }` — that's the gap
+	 * between the cart form and whatever follows on the page
+	 * (category, tabs, related products). When the modal flag is
+	 * ON, the form is replaced by this trigger wrapper, which on
+	 * classic themes inherits no equivalent bottom spacing — so we
+	 * match WC's literal `2em` here to keep parity with non-modal
+	 * and non-bookable pages. */
+	margin-bottom: 2em;
+}
+
+.wc-bookings-modal-trigger {
+	/* Hug content. No min-width — let the theme's button styling decide
+	 * the natural size (same as the regular product's Add-to-Cart). */
+}
+
+body.wc-bookings-modal-open {
+	overflow: hidden;
+}
+
+$modal-transition-duration: 220ms;
+$modal-transition-easing: cubic-bezier( 0.32, 0.72, 0.24, 1 );
+
+/* Fallback backdrop colour — used when the mini-cart drawer's overlay
+ * CSS isn't loaded on the page and the JS shim
+ * (`syncBackdropFromMiniCart` in modal-booking.js) can't read a value
+ * to publish to `--wcb-modal-backdrop`. Mirrors WC Blocks' current
+ * `.wc-block-components-drawer__screen-overlay` value. */
+$modal-backdrop-fallback: rgba( 95, 95, 95, 0.35 );
+
+dialog.wc-bookings-modal {
+	padding: 0;
+	border: 0;
+	color: inherit;
+	background: transparent;
+	width: 100vw;
+	height: 100vh;
+	max-width: 100vw;
+	max-height: 100vh;
+	margin: 0;
+	inset: 0;
+	display: none;
+	align-items: center;
+	justify-content: center;
+
+	&[open] {
+		display: flex;
+	}
+
+	&[open]::backdrop {
+		background: var( --wcb-modal-backdrop, #{$modal-backdrop-fallback} );
+	}
+}
+
+/* Polyfill path: browser lacks HTMLDialogElement.showModal(). */
+.wc-bookings-modal.is-open {
+	display: flex;
+	position: fixed;
+	inset: 0;
+	z-index: 100000;
+	background: var( --wcb-modal-backdrop, #{$modal-backdrop-fallback} );
+	align-items: center;
+	justify-content: center;
+}
+
+.wc-bookings-modal__panel {
+	background: #fff;
+	color: inherit;
+	width: min( 680px, 92vw );
+	max-height: min( 80vh, 720px );
+	display: flex;
+	flex-direction: column;
+	/* Square corners on desktop — modern dialog convention (macOS sheets,
+	 * GitHub modals). Mobile keeps a small top-corner rounding further
+	 * down so the bottom sheet still reads as a sliding sheet. */
+	border-radius: 0;
+	overflow: hidden;
+}
+
+/* Panel entry — simple fade-in. No transform, no slide, no scale.
+ * Just an opacity ramp so the panel materialises in place without
+ * any motion that could read as jumpy. Same on desktop and mobile. */
+dialog.wc-bookings-modal[open] .wc-bookings-modal__panel,
+.wc-bookings-modal.is-open .wc-bookings-modal__panel {
+	animation: wcb-panel-in $modal-transition-duration ease-out;
+}
+
+@keyframes wcb-panel-in {
+	from {
+		opacity: 0;
+	}
+}
+
+/* Panel exit — opacity ramp back to 0. JS adds `is-closing` on the
+ * dialog when close() is called, then waits for `animationend` before
+ * actually dismissing the dialog. `forwards` fill mode keeps the
+ * panel at opacity 0 between the animation's end and dialog.close()
+ * — without it the panel would flash back to opacity 1 for a frame.
+ *
+ * Specificity here is bumped via the `dialog.` element prefix to
+ * (0,3,2) so this rule outweighs the entry rule's (0,2,2) — otherwise
+ * the entry animation's `animation` property would stay attached and
+ * the new exit animation wouldn't take over. */
+dialog.wc-bookings-modal.is-closing .wc-bookings-modal__panel,
+.wc-bookings-modal.is-closing .wc-bookings-modal__panel {
+	animation: wcb-panel-out $modal-transition-duration ease-out forwards;
+}
+
+@keyframes wcb-panel-out {
+	to {
+		opacity: 0;
+	}
+}
+
+.wc-bookings-modal__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	/* Tighter right gap so the close button sits closer to the panel's
+	 * right edge. Left padding kept at 1.25rem to align the title with
+	 * the body content below. */
+	padding: 0.25rem 0.5rem 0.25rem 1.25rem;
+	border-bottom: 1px solid rgba( 0, 0, 0, 0.08 );
+	flex-shrink: 0;
+}
+
+.wc-bookings-modal__title {
+	margin: 0;
+	/* Track the theme's `large` font-size preset so the modal title
+	 * scales with the theme's typographic system. `1.5rem` (24px)
+	 * fallback covers classic themes (and the rare block theme that
+	 * doesn't define `large`) — close to the middle of what TT3/TT4/
+	 * TT5 resolve `large` to (1.38–1.85rem). */
+	font-size: var( --wp--preset--font-size--large, 1.5rem );
+	line-height: 1.3;
+}
+
+/* The close button reuses the mini-cart drawer's classes for its
+ * visual styling (transparent bg, SVG X icon, hover/focus states).
+ * But that source ships `position: absolute; top: 12px; right: 12px;
+ * margin: -14.4px` so the button glues itself to the drawer's corner.
+ *
+ * Inside our header (a flex row), absolute positioning pops the button
+ * out of the flex flow — `align-items: center` no longer applies to it,
+ * the header sizes only to the title's height, and the button sits
+ * slightly above the header's top edge. Override back to static so the
+ * button becomes a normal flex child and the header centers both the
+ * title and the button with equal padding above and below. */
+.wc-bookings-modal .wc-bookings-modal__header .wc-bookings-modal__close {
+	/* The mini-cart drawer's CSS sets `position: absolute !important` so
+	 * we have to match the `!important` to win the cascade. */
+	position: static !important;
+	margin: 0;
+	top: auto;
+	right: auto;
+	/* Classic-theme fallback: WC Blocks' `.wc-block-components-drawer__
+	 * close` rule (which ships `background: transparent !important`)
+	 * isn't loaded on classic themes without the mini-cart block on
+	 * the page. Without it, the browser / theme paints a default
+	 * grey-ish button background behind the X icon. Force transparent
+	 * + no border here so the close button is always just the icon,
+	 * regardless of which theme assets are enqueued. */
+	background: transparent !important;
+	border: 0 !important;
+	/* Center the X icon inside the button's box (and its focus ring).
+	 * WC Blocks' default rule on `.wc-block-components-drawer__close`
+	 * uses `padding: 1em` plus `position: absolute` — neither centers
+	 * the SVG within the button's CONTENT box. Switching to flex
+	 * centering lays the icon dead-centre regardless of the button's
+	 * declared padding, so the focus outline (which traces the button
+	 * box) wraps the X symmetrically. */
+	display: flex !important;
+	align-items: center;
+	justify-content: center;
+}
+
+.wc-bookings-modal__form {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+	margin: 0;
+}
+
+.wc-bookings-modal__body {
+	padding: 1.25rem;
+	overflow-y: auto;
+	flex: 1 1 auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+/* Inside the modal the panel itself already provides the visual
+ * grouping (border, radius, padding, background), so the inline-form
+ * card chrome from bookings-frontend.scss becomes a redundant
+ * "container inside a container" — strip it:
+ *
+ *   - `max-width: none` lets the form fill the modal body width
+ *     instead of being capped at the 440px we use on the product page.
+ *   - `border: 0` removes the contrast-token border.
+ *   - `border-radius: 0` removes the rounded corners (not visible
+ *     without a border, but kept tidy).
+ *   - `padding: 0` removes the inner padding; the modal body's own
+ *     `padding: 1.25rem` (see `.wc-bookings-modal__body`) handles the
+ *     breathing room from the panel edges.
+ *
+ * Specificity here is (0,2,0) which beats the (0,1,0) base rule in
+ * bookings-frontend.scss. */
+.wc-bookings-modal__body .wc-bookings-booking-form {
+	max-width: none;
+	border: 0;
+	border-radius: 0;
+	padding: 0;
+}
+
+/* Cost band in modal mode.
+ *
+ * `bookings-frontend.js > moveCostBandToButtonZone()` re-parents the
+ * `.wc-bookings-booking-cost` to sit as a direct child of the modal
+ * form, immediately before `.wc-bookings-modal__footer` — i.e.
+ * positioned BETWEEN `.wc-bookings-modal__body` and the action
+ * buttons. The rules below give it:
+ *
+ *   - Full panel width (`max-width: none`) — overrides the 440px cap
+ *     from `.cart .wc-bookings-booking-cost`.
+ *   - Symmetric `padding: 1rem 1.25rem` so the visual gap above and
+ *     below the cost band content reads as consistent on both sides.
+ *     Horizontal padding matches the modal body / footer's horizontal
+ *     padding so the band's content aligns with the form fields above
+ *     and the buttons below.
+ *   - `border-top` matching the modal footer's `border-top` so the
+ *     band reads as its own slot in the stack (body / cost / footer).
+ *   - Zero `margin` — spacing is owned by `padding`, not by
+ *     neighbours. */
+.wc-bookings-modal__form > .wc-bookings-booking-cost {
+	max-width: none;
+	margin: 0;
+	padding: 1rem 1.25rem;
+	border-top: 1px solid rgba( 0, 0, 0, 0.08 );
+}
+
+/* The nested-container flattening lives in bookings-frontend.scss now
+ * (applied always, not just inside the modal). */
+
+.wc-bookings-modal__body .wc-bookings-booking-cost {
+	margin-top: 1rem;
+}
+
+.wc-bookings-modal__footer {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	justify-content: flex-end;
+	padding: 1rem 1.25rem;
+	border-top: 1px solid rgba( 0, 0, 0, 0.08 );
+	/* Relative tint instead of a hardcoded `#fafafa` — the panel now
+	 * inherits the body bg via JS (`syncPanelBackgroundToBody`), so a
+	 * fixed shade would clash on coloured themes. `rgba(0, 0, 0, 0.02)`
+	 * always reads as "panel + a hair darker" regardless of underlying
+	 * panel colour. */
+	background: rgba( 0, 0, 0, 0.02 );
+	flex-shrink: 0;
+}
+
+.wc-bookings-modal__footer .button {
+	margin: 0;
+}
+
+/* Mobile: bottom sheet. Layout only — the slide-up itself is
+ * scripted in modal-booking.js. */
+@media (max-width: 600px) {
+	dialog.wc-bookings-modal[open],
+	.wc-bookings-modal.is-open {
+		align-items: flex-end;
+	}
+
+	.wc-bookings-modal__panel {
+		width: 100%;
+		max-width: none;
+		height: auto;
+		min-height: 80vh;
+		max-height: 92vh;
+		/* Slight rounding on the top corners only — the canonical
+		 * bottom-sheet pattern (iOS sheets, Material). Without this
+		 * the sheet reads as a slab. */
+		border-radius: 8px 8px 0 0;
+	}
+
+	.wc-bookings-modal__footer .button {
+		/* Pure 50/50 split — basis 0 so text length doesn't bias the
+		 * widths. */
+		flex: 1 1 0;
+	}
+}

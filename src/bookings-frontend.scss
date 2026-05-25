@@ -1,0 +1,526 @@
+/**
+ * Always-on visual tweaks for the WC Bookings frontend.
+ *
+ * WC Bookings' inline form CSS dates from a pre-block-theme era: the
+ * outer `.wc-bookings-booking-form` wrapper has a 1px gray border with
+ * heavy padding, and the date picker is wrapped in a <fieldset> that
+ * picks up the browser's default `2px groove` border. On a modern block
+ * theme this reads as nested cards inside the product summary.
+ *
+ * We replace WC's hardcoded grey container with a theme-token-driven
+ * one (contrast colour at 10% for the border, theme block-spacing for
+ * padding, theme input radius mirrored via JS) and strip the inner
+ * fieldset border so the form reads as a single soft card around all
+ * the controls — selects, steppers, date inputs, time-slot buttons —
+ * but NOT around the "Book Now" submit button, which is a sibling of
+ * `.wc-bookings-booking-form` (see templates/single-product/add-to-cart
+ * /booking.php) and therefore stays outside the border naturally.
+ */
+
+.wc-bookings-booking-form {
+	/* Subtle contrast-token border at 20% — softer than WC's #ddd and
+	 * adapts to any theme's text colour. */
+	border: 1px solid color-mix(
+		in srgb,
+		var( --wp--preset--color--contrast, #000 ) 20%,
+		transparent
+	);
+	/* Radius is published by bookings-frontend.js (`syncResourceSelect-
+	 * Styling`) from the theme's computed `.variations select` radius.
+	 * If the JS hasn't run yet, or no theme value is set, the 6px
+	 * fallback reads as the modern block-theme default. */
+	border-radius: var( --wcb-form-radius, 6px );
+	/* Inner padding uses the theme's block-spacing token so the gap
+	 * between the border and the first control matches the rhythm
+	 * between the controls themselves. Symmetric on all four sides. */
+	padding: var( --wp--style--block-gap, 1em );
+	/* Cap the form width so WC Bookings' time-slot layout (which sets
+	 * `min-width: 33%` on every .block-picker li) doesn't blow up when
+	 * the surrounding product summary container is wide. Roughly
+	 * mirrors the implicit width the legacy gray-bordered container
+	 * used to provide. */
+	max-width: 440px;
+	/* `border-box` so the 440px cap is measured against the OUTER edge
+	 * — same accounting the cost-band rule below uses, so the two
+	 * stack at identical visual widths. Without this the form's outer
+	 * width balloons past 440px by its border + padding while the cost
+	 * band stays at 440px, and the two stop aligning. */
+	box-sizing: border-box;
+	/* Zero WC's `margin: 0 0 1em` so the relocated cost band can sit
+	 * flush against the container's bottom edge — the user wants the
+	 * notification to read as "attached" to the form, not floating in
+	 * its own gap. */
+	margin-bottom: 0;
+	/* Flex column layout with `gap` so inter-child spacing is owned by
+	 * the parent rather than each child's individual margin. Without
+	 * this, WC's `.wc-bookings-booking-form .form-field { margin: 0 0
+	 * 1em }` rule (specificity 0,2,0) gives the LAST form-field a 1em
+	 * bottom margin — adding to the form's bottom padding and making
+	 * the bottom internal gap visibly larger than the top. With flex
+	 * `gap` plus the margin reset on direct children below, the
+	 * internal padding stays truly symmetric. */
+	display: flex;
+	flex-direction: column;
+	gap: var( --wp--style--block-gap, 1em );
+}
+
+/* WC Blocks ships `:where(.wp-block-woocommerce-add-to-cart-form > * + *)
+ * { padding: 0 4px }`. With the legacy gray border + padding gone from
+ * .wc-bookings-booking-form, that inherited 4px makes the booking form
+ * sit visibly inset from the title / price / category line. Scope the
+ * override to bookable products so simple / variable cart forms keep
+ * their original padding. */
+.product-type-booking form.cart {
+	padding-left: 0;
+	padding-right: 0;
+}
+
+/* Reset the date-picker fieldset:
+ *
+ *   - `border / padding / margin` zero out the visible <fieldset> chrome
+ *     so it matches the flat layout the rest of the form uses.
+ *
+ *   - `line-height: inherit` undoes WC's `.wc-bookings-booking-form
+ *     fieldset { line-height: 2.25em }`, which would otherwise inflate
+ *     the "Date" label's line box (the `<span class="label">Date</span>`
+ *     is a direct child of this fieldset and inherits its line-height,
+ *     unlike every other field label which sits inside a `.form-field`
+ *     wrapper that inherits the body line-height). Inheriting body
+ *     line-height makes the Date label spacing match all the others. */
+fieldset.wc-bookings-date-picker {
+	border: 0;
+	padding: 0;
+	margin: 0;
+	line-height: inherit;
+}
+
+/* The inline calendar (<div class="picker hasDatepicker">) is the
+ * last child of the date-picker fieldset (we move it there via JS in
+ * `moveCalendarBelowDateInputs`). WC ships
+ *
+ *   .wc-bookings-booking-form fieldset .picker.hasDatepicker {
+ *     line-height: 1em;
+ *     margin-bottom: 1em;
+ *   }
+ *
+ * — that bottom margin sits INSIDE the fieldset, between the calendar
+ * and the fieldset's bottom edge. Combined with the form's `gap` to
+ * the next sibling (time-slot grid), it produces a doubled ~2em gap
+ * below the calendar while every other inter-child gap is ~1em.
+ *
+ * Specificity here matches WC's (0,3,1); our stylesheet loads after,
+ * so this wins. */
+.wc-bookings-booking-form fieldset .picker.hasDatepicker {
+	margin-bottom: 0;
+}
+
+/* Inline calendar — selected day styling.
+ *
+ * The selected day's BACKGROUND COLOUR is mirrored from an unselected
+ * bookable day at runtime — see `syncSelectedDayBgFromBookable()` in
+ * bookings-frontend.js. Reading the computed colour is the only way
+ * to track theme overrides (where a theme replaces WC's `.bookable a
+ * { background-color: #1f874b !important }` with its own accent
+ * colour — CSS has no "inherit from sibling rule" mechanism).
+ *
+ * This SCSS rule covers the rest of the selected-day visual identity:
+ *
+ *   - `background-image: none` removes the gradient WC paints on
+ *     other day states.
+ *   - `text-shadow: none` removes the dark drop shadow WC uses on
+ *     unselected days; the selected day doesn't need it.
+ *   - `text-decoration: underline` is the selection cue (matching
+ *     WC's own `td.bookable-range` pattern).
+ *
+ * Color is intentionally NOT set — WC's `.bookable a { color: #fff
+ * !important }` continues to drive the number colour, so it matches
+ * unselected days exactly.
+ *
+ * The selector list covers every WC class combination — including the
+ * most-specific `td.bookable a.ui-state-active.ui-state-hover` (0,5,2)
+ * — so the override wins regardless of which classes jQuery UI adds. */
+.wc-bookings-booking-form .ui-datepicker td.ui-datepicker-current-day a,
+.wc-bookings-booking-form .ui-datepicker td.bookable.ui-datepicker-current-day a,
+.wc-bookings-booking-form .ui-datepicker td.partial_booked.ui-datepicker-current-day a,
+.wc-bookings-booking-form .ui-datepicker td.ui-datepicker-current-day a.ui-state-active,
+.wc-bookings-booking-form .ui-datepicker td.ui-datepicker-current-day a.ui-state-active.ui-state-hover {
+	background-image: none !important;
+	text-shadow: none !important;
+	text-decoration: underline !important;
+	text-underline-offset: 0.25em;
+}
+
+/* Once the fieldset's border + padding are gone, Chrome's <fieldset>
+ * UA quirk surfaces and centers block-level children via the anonymous
+ * content box. Force the timezone notice back to its original left
+ * alignment so the line "Times are in <Timezone>" sits flush with the
+ * other form labels above it. */
+.wc-bookings-date-picker-timezone-block {
+	text-align: left;
+}
+
+/* Field labels (Person Type, Type/Resource, etc.) — match the variable
+ * product's variation label style: bold weight, body font size. WC
+ * renders variation labels as <th>, which browsers paint bold by
+ * default; the bookable form uses <label> so we have to declare the
+ * weight explicitly. Leaving font-size to inherit (body) so labels
+ * scale with whatever the theme decided body text should be.
+ *
+ * `.wc-bookings-date-picker > .label` covers the "Date:" label rendered
+ * by the date-picker template when calendar mode is NOT always-visible
+ * (e.g. display-on-click). It's a `<span class="label">`, not a
+ * <legend> or <label>. */
+.wc-bookings-booking-form .form-field > label,
+.wc-bookings-booking-form .wc-bookings-date-picker > .label {
+	font-weight: 700;
+	font-size: inherit;
+	color: inherit;
+}
+
+
+
+/* Visual parity between the bookable form's <select> + number <input>
+ * and the equivalents on a variable product. WC styles variation
+ * selects through `.variations select` and qty inputs through
+ * `.input-text.qty`, which the booking form's fields don't match — so
+ * they fall through to browser defaults (tiny 14px Arial, no padding,
+ * native dropdown arrow). We mirror the same visual treatment WC ships
+ * for variable products so a booking page feels consistent with the
+ * rest of the store. */
+.wc-bookings-booking-form select,
+.wc-bookings-booking-form input[type="number"] {
+	font-size: var( --wp--preset--font-size--small, 0.9em );
+	box-sizing: border-box;
+}
+
+.wc-bookings-booking-form select {
+	height: 3em;
+	padding: 0.9em 3em 0.9em 1.1em;
+	appearance: none;
+	/* Always-white background — explicitly excluded from the JS shim
+	 * that mirrors variation-select styling, so the resource select
+	 * stays readable even when the theme makes its variation select
+	 * transparent over a coloured page bg. */
+	background-color: #fff;
+	/* Default chevron SVG (Feather chevron-down WC core ships) — the
+	 * JS shim overrides this with whatever the theme uses for variation
+	 * selects, but this is the fallback if the shim doesn't run. */
+	background-image: url( 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJibGFjayIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJmZWF0aGVyIGZlYXRoZXItY2hldnJvbi1kb3duIj48cG9seWxpbmUgcG9pbnRzPSI2IDkgMTIgMTUgMTggOSI+PC9wb2x5bGluZT48L3N2Zz4=' );
+	background-repeat: no-repeat;
+	background-position: right 12px center;
+	background-size: 16px 16px;
+}
+
+/* Person inputs get wrapped in <div class="quantity"> and tagged with
+ * `input-text qty text` by bookings-frontend.js — same DOM shape WC
+ * uses for product-quantity steppers.
+ *
+ * Two WC rules normally style the variable-product qty input (small
+ * `padding: 0 5px`, narrow content-box width) but they're scoped to
+ * direct-child positions in the form that the booking form's nested
+ * .form-field layout doesn't satisfy. As a result the booking input
+ * fell through to `.wc-block-add-to-cart-form .input-text` (thick
+ * 0.9rem/1.1rem padding) and WC Bookings' own `width: 25%` — the digit
+ * ends up cropped, especially for two-digit values like 10+.
+ *
+ * Re-apply the variable product's qty values explicitly here and pin
+ * height to 3em so the person field lines up with the Type select on
+ * the same row. */
+/* The 4-class selector (`.form-field` + `.quantity` + `.qty` inside
+ * `.wc-bookings-booking-form`) bumps specificity above WC Bookings'
+ * own `.wc-bookings-booking-form .form-field input[type="number"] {
+ * width: 25% }` rule (which is 0,3,1 because the attribute selector
+ * counts as a class). Without this, the legacy 25% width wins and
+ * crops the digit. */
+/* Date-picker captions under each number input ("Month", "Day", "Year")
+ * inherit a muted grey from WC Bookings' frontend.css. Switch them to
+ * `color: inherit` so they pick up the theme's body text colour.
+ * Position and size are deliberately left alone. */
+.wc-bookings-booking-form .wc-bookings-date-picker-date-fields label > span {
+	color: inherit;
+}
+
+/* Year / month / day inputs (shown when calendar mode is set to
+ * display-on-click) should match the person stepper field's height
+ * and internal padding so the form reads consistently. Theme-agnostic
+ * — hard-pinned values that mirror the person `.qty` styling, but
+ * applied directly to the date inputs so we don't have to touch the
+ * surrounding markup or the caption layout. */
+.wc-bookings-booking-form .wc-bookings-date-picker-date-fields input[type="number"] {
+	box-sizing: border-box;
+	height: 3em;
+	padding: 0 5px;
+}
+
+.wc-bookings-booking-form .form-field .quantity .qty {
+	/* Match the variable-product qty in width AND the booking form's
+	 * select in height. Variable qty is 66px rendered total; the select
+	 * is 3em (~43px). Using border-box lets us pin total dimensions
+	 * directly without juggling content+padding+border math.
+	 *
+	 * 4.6em × 14.4px (the small font preset) ≈ 66px wide — same as
+	 * `.qty` on a non-bookable product. 3em height aligns with the
+	 * Type select on the row above. Padding 0 5px keeps WC's compact
+	 * horizontal padding so the digit (including two digits like 10+)
+	 * isn't cropped. */
+	box-sizing: border-box;
+	width: 4.6em;
+	height: 3em;
+	padding: 0 5px;
+	text-align: center;
+}
+
+.wc-bookings-booking-form .form-field:has( > label ) > .quantity {
+	flex: 0 0 auto;
+}
+
+/* Margin reset on every direct child of the booking form. Inter-child
+ * vertical spacing is owned by the parent's `gap` (set in the rule
+ * above), so any child-level margin would either add to that gap
+ * (double spacing) or — worse, in the case of the last child — push
+ * the bottom internal padding out and break the symmetric breathing
+ * room inside the container border.
+ *
+ * Why the compound selector list:
+ *
+ *   • `> *` covers most children (specificity 0,1,0).
+ *   • `> .form-field` is needed to beat WC's `.wc-bookings-booking-
+ *     form .form-field { margin: 0 0 1em }` (0,2,0).
+ *   • `> fieldset` is needed to beat WC's `.wc-bookings-booking-form
+ *     fieldset { margin: 0 0 1em; line-height: 2.25em }` (0,1,1).
+ *
+ * Comma-separated rules carry per-selector specificity, so .form-
+ * field gets (0,2,1), fieldset gets (0,1,2), and everything else
+ * gets (0,1,0) — all sufficient to override WC's defaults. */
+.wc-bookings-booking-form > *,
+.wc-bookings-booking-form > .form-field,
+.wc-bookings-booking-form > fieldset {
+	margin: 0;
+}
+
+
+/* Fixed 1em gap above the Book Now button.
+ *
+ * The button always sits below either the form container (when the
+ * cost band is hidden) or the cost band itself (when shown). Either
+ * way the visible gap above the button should be 1em.
+ *
+ * `!important` is needed because block-theme `wp-element-button`
+ * styles ship a `margin: 0` rule with high enough effective specificity
+ * to override our plain margin-top — silently zeroing the gap and
+ * gluing the button to whatever is above it. The `!important` short-
+ * circuits that cascade battle. Specificity-bumping alone wasn't
+ * enough in practice (verified live on the user's TT5 variation).
+ *
+ * The value is a literal `1em` (not `var(--wp--style--block-gap, …)`)
+ * because some block-theme variations define `--wp--style--block-gap:
+ * 0`, which would silently zero a var-driven margin (the var IS
+ * defined; the fallback only kicks in when it's undefined). */
+form.cart > .wc-bookings-booking-form-button {
+	margin-top: 1em !important;
+}
+
+/* Layout parity with variable products: label inline with its control
+ * instead of stacked above. The variable product's variation row gets
+ * this look "for free" because it's wrapped in <table class="variations">
+ * where <th>/<td> sit side-by-side. The bookable form's <p class="form-
+ * field"> stacks its children by default, so we flex them. Stacks back
+ * below ~480px to keep long translated labels from cramping the input
+ * on phones.
+ *
+ * `:has(> label)` scopes the flex to fields that actually have a
+ * label+control pair. The time-slot wrapper is also a `.form-field`
+ * but contains a <ul.block-picker> only, no label — leaving it flex-
+ * containerised would shrink the slot grid to its content width
+ * instead of letting it span the calendar's full width. */
+.wc-bookings-booking-form .form-field:has(> label) {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.75em;
+
+	> label {
+		flex: 0 0 auto;
+		margin: 0;
+	}
+
+	> select {
+		/* WC Bookings' frontend.css sets `width: 100%` on every select
+		 * inside the booking form, which traps the select at the full
+		 * container width and forces it onto its own row below the
+		 * label. Reset to `auto` so it sizes to content + chevron
+		 * padding and sits inline with the label.
+		 *
+		 * The `min-width` anchors the select to a consistent width
+		 * regardless of which option is selected (otherwise picking a
+		 * shorter / longer resource name would visibly resize the
+		 * dropdown each time). Mirrors how variable-product variation
+		 * selects use `min-width: 75%` for the same reason. */
+		flex: 0 1 auto;
+		width: auto;
+		min-width: 12em;
+		max-width: 100%;
+	}
+
+	/* Person inputs are wrapped in <div class="quantity"> by JS, so the
+	 * input itself is no longer a direct child of .form-field. The
+	 * wrapper's flex sizing is handled by the rule further down. */
+}
+
+@media ( max-width: 480px ) {
+	.wc-bookings-booking-form .form-field:has(> label) {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.25em;
+	}
+
+	/* The date picker fieldset isn't a `.form-field`, so it doesn't pick
+	 * up the flex-column rule above. Its label ("Date:") and inputs are
+	 * already stacked naturally (the `.wc-bookings-date-picker-date-
+	 * fields` div drops below the inline label/colon), but the visual
+	 * gap is line-height-driven rather than an explicit space — visibly
+	 * tighter than the 0.25em used by every other stacked label+control
+	 * pair. Match the gap explicitly so the Date label sits the same
+	 * distance above its inputs as the rest of the form. */
+	.wc-bookings-booking-form .wc-bookings-date-picker-date-fields {
+		margin-top: 0.25em;
+	}
+}
+
+/* Time-slot grid: 3 equal-width columns that fill the calendar width.
+ *
+ * WC Bookings' default layout uses `float: left; min-width: 33%` on
+ * each <li>, which produces ~3 columns but with widths that drift to
+ * fit each slot's content. Switching to flex with an explicit per-item
+ * basis gives consistent equal columns and proper full-width alignment
+ * with the calendar above. Three columns matches WC Bookings' existing
+ * "approximate 3-col" rhythm.
+ *
+ * Gap uses the theme's block-spacing token so slot spacing follows the
+ * same design system as the rest of the page; 0.5em fallback keeps the
+ * grid tight on classic themes without the token. */
+.wc-bookings-booking-form .block-picker {
+	display: flex;
+	flex-wrap: wrap;
+	/* Slight breathing room between slots so the outlined toggle
+	 * buttons read as individual cells instead of a continuous strip. */
+	gap: 0.5rem;
+	list-style: none;
+	padding-left: 0;
+	margin: 0;
+	/* Register the grid as a size-query container so the column-count
+	 * rule below responds to the picker's actual width — not the
+	 * viewport. This way a bookable product placed in a narrow sidebar
+	 * gets the 2-column layout even on a wide desktop. */
+	container-type: inline-size;
+	container-name: wc-bookings-slot-grid;
+}
+
+.wc-bookings-booking-form .block-picker li {
+	/* Subtract the cumulative gap width so 3 cells + 2 gaps fit in
+	 * exactly 100% of the container. */
+	flex: 0 0 calc( ( 100% - 1rem ) / 3 );
+	min-width: 0;
+	float: none;
+	margin: 0;
+	list-style: none;
+}
+
+/* Drop to 2 columns when the picker narrows past ~22em (~352px at body
+ * size). Below that, three columns squeeze the slot text into something
+ * uncomfortable to read or tap. */
+@container wc-bookings-slot-grid ( max-width: 22em ) {
+	.wc-bookings-booking-form .block-picker li {
+		flex: 0 0 calc( ( 100% - 0.5rem ) / 2 );
+	}
+}
+
+/* Empty-state line ("Choose a date above to see available times.") is
+ * rendered by time-picker.js as a single <li> inside .block-picker with
+ * no .block class. The flex rule above makes every <li> 1/3 of the
+ * container — fine for actual time slots, but the empty-state sentence
+ * wraps onto 3-4 lines in that narrow column. Let the empty <li> span
+ * the full row instead. */
+.wc-bookings-booking-form .block-picker > li:not(.block) {
+	flex: 1 1 100%;
+}
+
+/* WC's time-picker.js sets inline pixel `width` + `height` on every
+ * slot <a> based on the natural width of the longest one (recomputed
+ * only after AJAX, never on resize). With the flex grid above, the
+ * <li> column width is what matters — let the <a> fill its parent. */
+.wc-bookings-booking-form .block-picker li a {
+	width: auto !important;
+	height: auto !important;
+}
+
+/* Cost-preview band — used for two states:
+ *   1. Normal: a calculated price like "$100".
+ *   2. Error : a `<span class="booking-error">…</span>` injected by the
+ *      `wc_bookings_calculate_costs` AJAX endpoint, e.g. "The minimum
+ *      persons per group is 1".
+ *
+ * The band lives directly above the Book Now button (moved out of the
+ * form container by bookings-frontend.js — `moveCostBandToButtonZone`)
+ * so it reads as a status line for the submit action.
+ *
+ * Selector uses `.cart` — the wrapping `<form class="cart">` — because
+ * WC's original `.wc-bookings-booking-form .wc-bookings-booking-cost`
+ * selector no longer matches once the band is moved out of that
+ * wrapper. Same specificity (0,2,0), so our stylesheet (loaded after
+ * `dist/frontend.css`) wins. `padding`, `max-width` and `box-sizing`
+ * step in for WC's old `padding: 1em` which lived on that descendant
+ * rule and disappeared along with selector match.
+ *
+ * Background uses the theme's contrast colour at 10% so the band reads
+ * as a soft inline note. Top border is zeroed because WC ships a
+ * hardcoded grey divider that no longer makes sense without the legacy
+ * boxed wrapper above. */
+.cart .wc-bookings-booking-cost {
+	color: var( --wp--preset--color--contrast, #000 );
+	background-color: color-mix(
+		in srgb,
+		var( --wp--preset--color--contrast, #000 ) 10%,
+		transparent
+	);
+	border-top: 0;
+	padding: var( --wp--style--block-gap, 1em );
+	max-width: 440px;
+	box-sizing: border-box;
+	/* Fixed 1em gap below the band so the spacing between the
+	 * notification and the Book Now button stays consistent. */
+	margin-bottom: 1em;
+}
+
+
+/* Time slot toggle button styling.
+ *
+ * Each slot <a> gets `wp-element-button` from bookings-frontend.js, so
+ * the theme's button block CSS provides its native border-radius and
+ * typography automatically. We override only the colour states below:
+ *
+ *   • Unselected → transparent fill, contrast border + text.
+ *   • Selected   → contrast fill, base text.
+ *
+ * `!important` is used to defeat WC Bookings' own !important rules on
+ * `.selected` and to outweigh the nth-child alternating-background
+ * selectors (which have higher specificity than ours otherwise). */
+.wc-bookings-booking-form .block-picker li.block a {
+	background: transparent !important;
+	color: var( --wp--preset--color--contrast, #000 ) !important;
+	border: 1px solid var( --wp--preset--color--contrast, #000 ) !important;
+	box-shadow: none !important;
+}
+
+.wc-bookings-booking-form .block-picker li.block a.selected,
+.wc-bookings-booking-form .block-picker li.block a:hover {
+	background: var( --wp--preset--color--contrast, #000 ) !important;
+	color: var( --wp--preset--color--base, #fff ) !important;
+}
+
+/* Keep an accessible focus indicator without masquerading as a
+ * selection (the auto-focused first slot after a date is picked). */
+.wc-bookings-booking-form .block-picker li.block a:focus-visible {
+	outline: 2px solid var( --wp--preset--color--contrast, #000 );
+	outline-offset: 2px;
+}
