@@ -1,17 +1,23 @@
 /**
- * Always-on layout-only tweaks for the WC Bookings frontend.
+ * Always-on layout-only tweaks for the WC Bookings frontend, plus a
+ * targeted fix for the time-slot picker (see "Time slots" block below).
  *
- * Visual restyling of form controls (border container, themed selects /
- * steppers, label typography, time-slot toggle colour states, calendar
- * day-bg overrides, timezone-into-empty-state merge, etc.) has been
- * REMOVED — that work will be picked up by a separate "unified front-
- * end controls" extension that owns control styling across all WC
- * templates. The booking form here renders with WC's stock styling.
+ * Visual restyling of generic form controls (border container, themed
+ * selects / steppers, label typography, calendar day-bg overrides,
+ * timezone-into-empty-state merge, etc.) has been REMOVED — that work
+ * will be picked up by a separate "unified front-end controls"
+ * extension that owns control styling across all WC templates.
  *
- * What remains in this stylesheet is layout-only: rules that support
- * the DOM reordering done by `bookings-frontend.js` (calendar moved
- * below date inputs, cost band moved out of the form container and
- * above the Book now button).
+ * What remains here is:
+ *
+ *   1. Layout-only rules supporting the DOM reordering done by
+ *      `bookings-frontend.js` (calendar moved below date inputs,
+ *      cost band moved out of the form and above the Book now button).
+ *
+ *   2. Time-slot toggle styling — kept after the broader revert because
+ *      the slot picker is bookings-specific (no other WC template has
+ *      one, so the unified controls extension won't touch it) and WC's
+ *      stock styling is actively unusable, not just dated.
  */
 
 /* WC Blocks ships `:where(.wp-block-woocommerce-add-to-cart-form > * + *)
@@ -65,4 +71,68 @@
  * via the `form.cart >` parent selector. */
 form.cart > .wc-bookings-booking-form-button {
 	margin-top: 1em !important;
+}
+
+/* ---------------------------------------------------------------------
+ * Time slots — outline / filled toggle.
+ * ---------------------------------------------------------------------
+ *
+ * WC Bookings ships its time-slot picker with a zebra-striped layout
+ * (`li:nth-child(odd) a { background: #fff }` + `li:nth-child(even) a
+ * { background: #f5f5f5 }`) plus a green `.selected` highlight
+ * (`background: #239e57 !important`). On most modern themes the
+ * theme's button colour for the link text combines with the pale
+ * zebra stripes to produce illegible pale-on-pale slots, and the
+ * green selected pill clashes with any non-green palette.
+ *
+ * Each slot `<a>` already gets the `wp-element-button` class from
+ * bookings-frontend.js, so the theme's button-block CSS provides
+ * typography, radius, and padding. We add only the colour states
+ * here:
+ *
+ *   - Unselected: transparent fill, contrast border + contrast text.
+ *   - Selected / hover / focus: contrast fill, base text.
+ *
+ * `!important` is needed to defeat WC's hardcoded `!important` on
+ * `.selected` and to outweigh the `nth-child` zebra selectors. The
+ * flex grid + gap give the outline buttons breathing room from each
+ * other (WC's stock layout floats them with no gap so the outlines
+ * would touch).
+ *
+ * This survives the broader revert intentionally — see the file
+ * header above. */
+.wc-bookings-booking-form .block-picker {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	list-style: none;
+	margin: 0;
+	padding-left: 0;
+}
+
+.wc-bookings-booking-form .block-picker li {
+	flex: 0 0 calc( ( 100% - 1rem ) / 3 );
+	float: none;
+	margin: 0;
+	min-width: 0;
+}
+
+/* When no date is picked, `.block-picker` shows a single non-`.block`
+ * `<li>` with the empty-state message — let it span the full row. */
+.wc-bookings-booking-form .block-picker li:not( .block ) {
+	flex: 1 1 100%;
+}
+
+.wc-bookings-booking-form .block-picker li.block a {
+	background: transparent !important;
+	border: 1px solid var( --wp--preset--color--contrast, #000 ) !important;
+	box-shadow: none !important;
+	color: var( --wp--preset--color--contrast, #000 ) !important;
+}
+
+.wc-bookings-booking-form .block-picker li.block a:hover,
+.wc-bookings-booking-form .block-picker li.block a:focus,
+.wc-bookings-booking-form .block-picker li.block a.selected {
+	background: var( --wp--preset--color--contrast, #000 ) !important;
+	color: var( --wp--preset--color--base, #fff ) !important;
 }
