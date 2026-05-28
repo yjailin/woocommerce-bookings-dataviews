@@ -134,7 +134,7 @@ dialog.wc-bookings-modal.is-closing .wc-bookings-modal__panel,
 	 * right edge. Left padding kept at 1.25rem to align the title with
 	 * the body content below. */
 	padding: 0.25rem 0.5rem 0.25rem 1.25rem;
-	border-bottom: 1px solid rgba( 0, 0, 0, 0.08 );
+	border-bottom: 1px solid color-mix( in srgb, currentColor 20%, transparent );
 	flex-shrink: 0;
 }
 
@@ -249,7 +249,7 @@ dialog.wc-bookings-modal.is-closing .wc-bookings-modal__panel,
 	max-width: none;
 	margin: 0;
 	padding: 1rem 1.25rem;
-	border-top: 1px solid rgba( 0, 0, 0, 0.08 );
+	border-top: 1px solid color-mix( in srgb, currentColor 20%, transparent );
 }
 
 /* The nested-container flattening lives in bookings-frontend.scss now
@@ -265,7 +265,7 @@ dialog.wc-bookings-modal.is-closing .wc-bookings-modal__panel,
 	gap: 0.5rem;
 	justify-content: flex-end;
 	padding: 1rem 1.25rem;
-	border-top: 1px solid rgba( 0, 0, 0, 0.08 );
+	border-top: 1px solid color-mix( in srgb, currentColor 20%, transparent );
 	/* Relative tint instead of a hardcoded `#fafafa` — the panel now
 	 * inherits the body bg via JS (`syncPanelBackgroundToBody`), so a
 	 * fixed shade would clash on coloured themes. `rgba(0, 0, 0, 0.02)`
