@@ -257,7 +257,12 @@ dialog.wc-bookings-modal.is-closing .wc-bookings-modal__panel,
 .wc-bookings-modal__footer {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 0.5rem;
+	/* `row-gap` separates the cost band (full-width row) from the
+	 * button row below; bumped to 0.75rem so the price/error has a
+	 * little breathing room above the action buttons. `column-gap`
+	 * stays at 0.5rem for the horizontal gap between the two
+	 * buttons. */
+	gap: 0.75rem 0.5rem;
 	justify-content: flex-end;
 	padding: 1rem 1.25rem;
 	border-top: 1px solid color-mix( in srgb, currentColor 20%, transparent );
