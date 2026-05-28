@@ -228,36 +228,31 @@ dialog.wc-bookings-modal.is-closing .wc-bookings-modal__panel,
 
 /* Cost band in modal mode.
  *
- * `bookings-frontend.js > moveCostBandToButtonZone()` re-parents the
- * `.wc-bookings-booking-cost` to sit as a direct child of the modal
- * form, immediately before `.wc-bookings-modal__footer` — i.e.
- * positioned BETWEEN `.wc-bookings-modal__body` and the action
- * buttons. The rules below give it:
+ * `bookings-frontend.js > moveCostBandToButtonZone()` inserts the
+ * `.wc-bookings-booking-cost` as the FIRST CHILD of the modal
+ * footer — so it sits inside the same flex container as the action
+ * buttons, on its own full-width row above them. The modal then has
+ * three stacked sections (header / body / footer-with-cost-on-top)
+ * instead of four, with one fewer internal divider.
  *
- *   - Full panel width (`max-width: none`) — overrides the 440px cap
- *     from `.cart .wc-bookings-booking-cost`.
- *   - Symmetric `padding: 1rem 1.25rem` so the visual gap above and
- *     below the cost band content reads as consistent on both sides.
- *     Horizontal padding matches the modal body / footer's horizontal
- *     padding so the band's content aligns with the form fields above
- *     and the buttons below.
- *   - `border-top` matching the modal footer's `border-top` so the
- *     band reads as its own slot in the stack (body / cost / footer).
- *   - Zero `margin` — spacing is owned by `padding`, not by
- *     neighbours. */
-.wc-bookings-modal__form > .wc-bookings-booking-cost {
+ * Layout: `flex-basis: 100%` on a `flex-wrap: wrap` footer pushes
+ * the buttons onto the next row, where they keep their 50/50 share
+ * via `flex: 1 1 0` on `.button` (rule below). No own background,
+ * border, or padding — the band inherits the footer's container
+ * styling (tint + `padding: 1rem 1.25rem`) and the footer's `gap:
+ * 0.5rem` provides the visual gap between the band and the button
+ * row. */
+.wc-bookings-modal__footer > .wc-bookings-booking-cost {
+	flex-basis: 100%;
 	max-width: none;
 	margin: 0;
-	padding: 1rem 1.25rem;
-	border-top: 1px solid color-mix( in srgb, currentColor 20%, transparent );
+	padding: 0;
+	background: transparent;
+	border: 0;
 }
 
 /* The nested-container flattening lives in bookings-frontend.scss now
  * (applied always, not just inside the modal). */
-
-.wc-bookings-modal__body .wc-bookings-booking-cost {
-	margin-top: 1rem;
-}
 
 .wc-bookings-modal__footer {
 	display: flex;

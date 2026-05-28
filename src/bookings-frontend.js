@@ -114,13 +114,16 @@ function moveCostBandToButtonZone() {
 		return;
 	}
 
-	// MODAL MODE: place the cost band as the immediate previous sibling
-	// of the modal footer (between `.wc-bookings-modal__body` and
-	// `.wc-bookings-modal__footer`).
+	// MODAL MODE: insert the cost band as the FIRST CHILD of the modal
+	// footer so it sits inside the same container as the action
+	// buttons, above them. Reduces the modal from four stacked
+	// sections (header / body / cost / footer) to three (header /
+	// body / footer-with-cost), and visually ties the price/error
+	// to the action it refers to.
 	const modalFooter = document.querySelector( '.wc-bookings-modal__footer' );
 	if ( modalFooter ) {
-		if ( modalFooter.previousElementSibling !== cost ) {
-			modalFooter.parentNode.insertBefore( cost, modalFooter );
+		if ( modalFooter.firstElementChild !== cost ) {
+			modalFooter.insertBefore( cost, modalFooter.firstChild );
 		}
 		return;
 	}
