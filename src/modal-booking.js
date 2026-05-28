@@ -281,8 +281,15 @@ function initModal() {
 		// stale attribute that core can't clear.
 		const disabled = submitBtn.classList.contains( 'disabled' );
 
+		// Class only — never the HTML `disabled` attribute. Setting
+		// the attribute would prevent the click event from firing, so
+		// the `click` handler below (which routes to the submit button
+		// so WC's `single_add_to_cart_button` click handler can show
+		// its `i18n_choose_options` alert) wouldn't run when the user
+		// clicks the "Go to checkout" button in its invalid state. WC
+		// itself follows the same convention on the underlying submit
+		// button.
 		checkoutBtn.classList.toggle( 'disabled', disabled );
-		checkoutBtn.disabled = disabled;
 	}
 
 	// Mirror disabled state of the submit button onto "Proceed to Checkout".
@@ -325,11 +332,17 @@ function initModal() {
 
 	if ( checkoutBtn ) {
 		checkoutBtn.addEventListener( 'click', ( e ) => {
-			if (
-				checkoutBtn.classList.contains( 'disabled' ) ||
-				checkoutBtn.hasAttribute( 'disabled' )
-			) {
+			if ( checkoutBtn.classList.contains( 'disabled' ) ) {
+				// Same "invalid selections" state as the Add-to-cart
+				// button. Route the click through the submit button
+				// so WC's existing handler on `.single_add_to_cart_
+				// button` (in booking-form.js) fires its
+				// `i18n_choose_options` alert — same message and same
+				// UX as if the user had clicked the Add-to-cart button
+				// directly. WC's handler also `preventDefault`s, so
+				// the form doesn't submit.
 				e.preventDefault();
+				submitBtn.click();
 				return;
 			}
 			if ( redirectFlag ) {
