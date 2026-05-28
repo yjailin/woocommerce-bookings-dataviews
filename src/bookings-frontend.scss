@@ -64,6 +64,11 @@
  * WC's #ddd / UA groove, which is a graceful degrade. */
 .wc-bookings-booking-form {
 	border: 1px solid color-mix( in srgb, currentColor 20%, transparent );
+	/* Zero WC's `margin: 0 0 1em` so the relocated cost band can sit
+	 * flush against the container's bottom edge — matches the visual
+	 * of WC's stock booking page where the cost band was a child of
+	 * the form and there was no gap to fill. */
+	margin-bottom: 0;
 }
 
 fieldset.wc-bookings-date-picker {
@@ -82,8 +87,11 @@ fieldset.wc-bookings-date-picker {
  * extension lands. */
 .cart .wc-bookings-booking-cost {
 	background: #eee;
-	border-top: 1px solid #ddd;
 	padding: 1em;
+	/* No `border-top` — WC's stock `1px solid #ddd` would render
+	 * right against the form container's themed bottom border (since
+	 * the form now has `margin-bottom: 0`), producing a two-tone
+	 * double line. The form's bottom border IS the divider. */
 }
 
 /* Fixed 1em gap above the Book Now button. The button always sits
