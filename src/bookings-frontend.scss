@@ -44,6 +44,32 @@
 	grid-column: 1 / -1;
 }
 
+/* Standardise the two visible borders inside the booking form to a
+ * single, theme-aware line:
+ *
+ *   - The form container (`.wc-bookings-booking-form`) — WC ships
+ *     `border: 1px solid #ddd`, a hardcoded grey that doesn't track
+ *     the active theme.
+ *   - The date-picker fieldset (`fieldset.wc-bookings-date-picker`)
+ *     — falls through to the browser's `2px groove` UA chrome,
+ *     which renders as a chiselled ridge that doesn't match the
+ *     form container's flat 1px line.
+ *
+ * Both get `1px solid color-mix(currentColor 20%, transparent)` so
+ * they pick up the current text colour at runtime (works on any
+ * theme — classic, block, colour variation, custom) at a subtle 20%
+ * alpha that reads as a soft divider rather than a hard frame.
+ * `color-mix` requires modern browsers (Chrome 111+ / Safari 16.2+
+ * / Firefox 113+, all GA April 2023); older engines fall back to
+ * WC's #ddd / UA groove, which is a graceful degrade. */
+.wc-bookings-booking-form {
+	border: 1px solid color-mix( in srgb, currentColor 20%, transparent );
+}
+
+fieldset.wc-bookings-date-picker {
+	border: 1px solid color-mix( in srgb, currentColor 20%, transparent );
+}
+
 /* Cost band — `moveCostBandToButtonZone` in bookings-frontend.js re-
  * parents `.wc-bookings-booking-cost` to sit as a direct child of the
  * `<form class="cart">` wrapper, immediately before the Book now
