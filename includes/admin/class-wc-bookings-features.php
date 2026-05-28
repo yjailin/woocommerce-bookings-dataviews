@@ -21,8 +21,21 @@ if ( class_exists( 'WC_Bookings_Features' ) ) {
  */
 class WC_Bookings_Features {
 
-	const FEATURE_DATAVIEWS = 'dataviews';
-	const OPTION_PREFIX     = 'woocommerce_bookings_feature_';
+	const FEATURE_DATAVIEWS     = 'dataviews';
+	const FEATURE_MODAL_BOOKING = 'modal_booking';
+	const OPTION_PREFIX         = 'woocommerce_bookings_feature_';
+
+	/**
+	 * All registered feature identifiers.
+	 *
+	 * @return string[]
+	 */
+	public static function all(): array {
+		return array(
+			self::FEATURE_DATAVIEWS,
+			self::FEATURE_MODAL_BOOKING,
+		);
+	}
 
 	/**
 	 * Constructor.
@@ -75,8 +88,11 @@ class WC_Bookings_Features {
 			wp_die( esc_html__( 'You do not have permission to manage settings.', 'woocommerce-bookings' ) );
 		}
 
-		$enabled = isset( $_POST[ self::OPTION_PREFIX . self::FEATURE_DATAVIEWS ] ) ? 'yes' : 'no';
-		update_option( self::OPTION_PREFIX . self::FEATURE_DATAVIEWS, $enabled );
+		foreach ( self::all() as $feature ) {
+			$option_key = self::OPTION_PREFIX . $feature;
+			$enabled    = isset( $_POST[ $option_key ] ) ? 'yes' : 'no';
+			update_option( $option_key, $enabled );
+		}
 
 		wp_safe_redirect( admin_url( 'edit.php?post_type=wc_booking&page=wc_bookings_settings&tab=features&saved=1' ) );
 		exit;

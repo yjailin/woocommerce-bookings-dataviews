@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: WooCommerce Bookings — DataViews
+ * Plugin Name: WooCommerce Bookings Enhanced
  * Plugin URI: https://woocommerce.com/products/woocommerce-bookings/
- * Description: Adds a DataViews-powered "All Bookings" admin screen to WooCommerce Bookings, behind a feature flag.
+ * Description: Customer-facing booking form improvements plus an opt-in modal/popup flow, and a DataViews-powered "All Bookings" admin screen — all behind feature flags.
  * Version: 0.1.0
  * Requires Plugins: woocommerce, woocommerce-bookings
  * Requires at least: 6.5
@@ -11,7 +11,7 @@
  * License: GPL-2.0-or-later
  * Text Domain: woocommerce-bookings
  *
- * @package WooCommerce Bookings DataViews
+ * @package WooCommerce Bookings Enhanced
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -44,6 +44,16 @@ function wc_bookings_dataviews_bootstrap() {
 	if ( WC_Bookings_Features::is_enabled( WC_Bookings_Features::FEATURE_DATAVIEWS ) ) {
 		new WC_Bookings_DataViews_REST();
 		new WC_Bookings_DataViews_URL_Router();
+	}
+
+	if ( ! is_admin() ) {
+		require_once WC_BOOKINGS_DATAVIEWS_PATH . 'includes/frontend/class-wc-bookings-frontend.php';
+		new WC_Bookings_Frontend();
+
+		if ( WC_Bookings_Features::is_enabled( WC_Bookings_Features::FEATURE_MODAL_BOOKING ) ) {
+			require_once WC_BOOKINGS_DATAVIEWS_PATH . 'includes/frontend/class-wc-bookings-modal-flow.php';
+			new WC_Bookings_Modal_Flow();
+		}
 	}
 
 	if ( is_admin() ) {

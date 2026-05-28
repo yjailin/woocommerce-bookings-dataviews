@@ -1,0 +1,195 @@
+/**
+ * Always-on layout-only tweaks for the WC Bookings frontend, plus a
+ * targeted fix for the time-slot picker (see "Time slots" block below).
+ *
+ * Visual restyling of generic form controls (border container, themed
+ * selects / steppers, label typography, calendar day-bg overrides,
+ * timezone-into-empty-state merge, etc.) has been REMOVED — that work
+ * will be picked up by a separate "unified front-end controls"
+ * extension that owns control styling across all WC templates.
+ *
+ * What remains here is:
+ *
+ *   1. Layout-only rules supporting the DOM reordering done by
+ *      `bookings-frontend.js` (calendar moved below date inputs,
+ *      cost band moved out of the form and above the Book now button).
+ *
+ *   2. Time-slot toggle styling — kept after the broader revert because
+ *      the slot picker is bookings-specific (no other WC template has
+ *      one, so the unified controls extension won't touch it) and WC's
+ *      stock styling is actively unusable, not just dated.
+ */
+
+/* WC Blocks ships `:where(.wp-block-woocommerce-add-to-cart-form > * + *)
+ * { padding: 0 4px }`. With nothing else overriding it, the booking
+ * form sits visibly inset from the title / price / category line.
+ * Scope the override to bookable products so simple / variable cart
+ * forms keep their original padding. */
+.product-type-booking form.cart {
+	padding-left: 0;
+	padding-right: 0;
+}
+
+/* In block-theme context WC Blocks renders `form.cart` as a CSS Grid
+ * container (see WC Bookings' own `.wp-block-woocommerce-add-to-cart
+ * -form form.cart > .wc-bookings-booking-form-button { grid-column:
+ * 1 / -1 }` rule — that hint alone implies the parent is a grid).
+ * Without `grid-column: 1 / -1`, `#wc-bookings-booking-form` and the
+ * relocated cost band land in a single auto-sized grid track, so they
+ * shrink to content width and read as visibly narrower than the rest
+ * of the product summary. Force them to span the full row. In classic
+ * (non-grid) contexts this property is silently ignored. */
+.product-type-booking form.cart > #wc-bookings-booking-form,
+.product-type-booking form.cart > .wc-bookings-booking-cost {
+	grid-column: 1 / -1;
+}
+
+/* Standardise the two visible borders inside the booking form to a
+ * single, theme-aware line:
+ *
+ *   - The form container (`.wc-bookings-booking-form`) — WC ships
+ *     `border: 1px solid #ddd`, a hardcoded grey that doesn't track
+ *     the active theme.
+ *   - The date-picker fieldset (`fieldset.wc-bookings-date-picker`)
+ *     — falls through to the browser's `2px groove` UA chrome,
+ *     which renders as a chiselled ridge that doesn't match the
+ *     form container's flat 1px line.
+ *
+ * Both get `1px solid color-mix(currentColor 20%, transparent)` so
+ * they pick up the current text colour at runtime (works on any
+ * theme — classic, block, colour variation, custom) at a subtle 20%
+ * alpha that reads as a soft divider rather than a hard frame.
+ * `color-mix` requires modern browsers (Chrome 111+ / Safari 16.2+
+ * / Firefox 113+, all GA April 2023); older engines fall back to
+ * WC's #ddd / UA groove, which is a graceful degrade. */
+.wc-bookings-booking-form {
+	border: 1px solid color-mix( in srgb, currentColor 20%, transparent );
+	/* Zero WC's `margin: 0 0 1em` so the relocated cost band can sit
+	 * flush against the container's bottom edge — matches the visual
+	 * of WC's stock booking page where the cost band was a child of
+	 * the form and there was no gap to fill. */
+	margin-bottom: 0;
+}
+
+fieldset.wc-bookings-date-picker {
+	border: 1px solid color-mix( in srgb, currentColor 20%, transparent );
+}
+
+/* Cost band — `moveCostBandToButtonZone` in bookings-frontend.js re-
+ * parents `.wc-bookings-booking-cost` to sit as a direct child of the
+ * `<form class="cart">` wrapper, immediately before the Book now
+ * button. WC's `.wc-bookings-booking-form .wc-bookings-booking-cost`
+ * styling no longer matches at that new position (the band is no
+ * longer a descendant of `.wc-bookings-booking-form`), so we re-apply
+ * WC's stock visual treatment (light grey bg + grey divider + 1em
+ * padding) at the new selector chain. Kept intentionally close to
+ * WC's defaults — no theme tokens — until the unified controls
+ * extension lands. */
+/* Scoped to `form.cart:not(.wc-bookings-modal__form) >` so this rule
+ * only fires on the STANDALONE product page. The modal's `<form>`
+ * also carries the `.cart` class (so WC's submit / AJAX hooks keep
+ * working), so a naked `form.cart >` selector would match modal mode
+ * too — and the user wants the modal cost band to use the site
+ * background, not the text-coloured wash this rule paints. */
+form.cart:not( .wc-bookings-modal__form ) > .wc-bookings-booking-cost {
+	/* Use the current text colour at 20% alpha as the band's bg.
+	 * Matches the same `color-mix(currentColor, 20%)` we use for the
+	 * form container and date-picker fieldset borders, so the cost
+	 * band reads as part of the same colour system. Text on top of
+	 * the band stays at full opacity, giving ~80% contrast against
+	 * its own 20%-alpha background — readable on any theme, light
+	 * or dark. */
+	background: color-mix( in srgb, currentColor 20%, transparent );
+	padding: 1em;
+	/* No `border-top` — WC's stock `1px solid #ddd` would render
+	 * right against the form container's themed bottom border (since
+	 * the form now has `margin-bottom: 0`), producing a two-tone
+	 * double line. The form's bottom border IS the divider. */
+}
+
+/* Fixed 1em gap above the Book Now button. The button always sits
+ * below either the form container (when the cost band is hidden) or
+ * the cost band itself (when shown). Either way the visible gap is
+ * 1em.
+ *
+ * `!important` is needed because block-theme `wp-element-button`
+ * styles ship a `margin: 0` rule with high enough effective
+ * specificity to override our plain margin-top. Specificity (0,1,2)
+ * via the `form.cart >` parent selector. */
+form.cart > .wc-bookings-booking-form-button {
+	margin-top: 1em !important;
+}
+
+/* ---------------------------------------------------------------------
+ * Time slots — outline / filled toggle.
+ * ---------------------------------------------------------------------
+ *
+ * WC Bookings ships its time-slot picker with a zebra-striped layout
+ * (`li:nth-child(odd) a { background: #fff }` + `li:nth-child(even) a
+ * { background: #f5f5f5 }`) plus a green `.selected` highlight
+ * (`background: #239e57 !important`). On most modern themes the
+ * theme's button colour for the link text combines with the pale
+ * zebra stripes to produce illegible pale-on-pale slots, and the
+ * green selected pill clashes with any non-green palette.
+ *
+ * Each slot `<a>` already gets the `wp-element-button` class from
+ * bookings-frontend.js, so the theme's button-block CSS provides
+ * typography, radius, and padding. We add only the colour states
+ * here:
+ *
+ *   - Unselected: transparent fill, contrast border + contrast text.
+ *   - Selected / hover / focus: contrast fill, base text.
+ *
+ * `!important` is needed to defeat WC's hardcoded `!important` on
+ * `.selected` and to outweigh the `nth-child` zebra selectors. The
+ * flex grid + gap give the outline buttons breathing room from each
+ * other (WC's stock layout floats them with no gap so the outlines
+ * would touch).
+ *
+ * This survives the broader revert intentionally — see the file
+ * header above. */
+.wc-bookings-booking-form .block-picker {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	list-style: none;
+	margin: 0;
+	padding-left: 0;
+}
+
+.wc-bookings-booking-form .block-picker li {
+	flex: 0 0 calc( ( 100% - 1rem ) / 3 );
+	float: none;
+	margin: 0;
+	min-width: 0;
+}
+
+/* When no date is picked, `.block-picker` shows a single non-`.block`
+ * `<li>` with the empty-state message — let it span the full row. */
+.wc-bookings-booking-form .block-picker li:not( .block ) {
+	flex: 1 1 100%;
+}
+
+.wc-bookings-booking-form .block-picker li.block a {
+	background: transparent !important;
+	border: 1px solid var( --wp--preset--color--contrast, #000 ) !important;
+	box-shadow: none !important;
+	color: var( --wp--preset--color--contrast, #000 ) !important;
+	/* Defeat WC's `resize_blocks()` in `time-picker.js`, which writes
+	 * inline `width` and `height` on each slot `<a>` based on the
+	 * MAX dimensions measured at page-load time. Those inline values
+	 * never recompute on viewport resize, so without this override
+	 * the slots stay frozen at the initial layout's widths even when
+	 * the page is resized. `width: auto` returns control to the flex
+	 * parent's track sizing; `height: auto` lets each slot fit its
+	 * content. */
+	width: auto !important;
+	height: auto !important;
+}
+
+.wc-bookings-booking-form .block-picker li.block a:hover,
+.wc-bookings-booking-form .block-picker li.block a:focus,
+.wc-bookings-booking-form .block-picker li.block a.selected {
+	background: var( --wp--preset--color--contrast, #000 ) !important;
+	color: var( --wp--preset--color--base, #fff ) !important;
+}

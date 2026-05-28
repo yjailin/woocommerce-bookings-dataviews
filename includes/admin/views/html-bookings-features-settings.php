@@ -9,8 +9,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$dataviews_enabled = WC_Bookings_Features::is_enabled( WC_Bookings_Features::FEATURE_DATAVIEWS );
-$saved             = isset( $_GET['saved'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+$dataviews_enabled     = WC_Bookings_Features::is_enabled( WC_Bookings_Features::FEATURE_DATAVIEWS );
+$modal_booking_enabled = WC_Bookings_Features::is_enabled( WC_Bookings_Features::FEATURE_MODAL_BOOKING );
+$saved                 = isset( $_GET['saved'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 ?>
 
 <?php if ( $saved ) : ?>
@@ -37,6 +38,23 @@ $saved             = isset( $_GET['saved'] ); // phpcs:ignore WordPress.Security
 							<?php checked( $dataviews_enabled ); ?>
 						/>
 						<?php esc_html_e( 'Replaces the classic bookings list with a DataViews-powered version. Experimental.', 'woocommerce-bookings' ); ?>
+					</label>
+				</td>
+			</tr>
+			<tr>
+				<th scope="row">
+					<?php esc_html_e( 'Booking form in a popup', 'woocommerce-bookings' ); ?>
+				</th>
+				<td>
+					<label for="woocommerce_bookings_feature_modal_booking">
+						<input
+							type="checkbox"
+							id="woocommerce_bookings_feature_modal_booking"
+							name="woocommerce_bookings_feature_modal_booking"
+							value="yes"
+							<?php checked( $modal_booking_enabled ); ?>
+						/>
+						<?php esc_html_e( 'Moves the booking form on the product page into a focused popup dialog, opened by a Book now button. Reduces page clutter and creates a cleaner purchase flow for customers. Experimental.', 'woocommerce-bookings' ); ?>
 					</label>
 				</td>
 			</tr>

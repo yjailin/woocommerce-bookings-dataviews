@@ -20,6 +20,11 @@ const {
 
 module.exports = {
 	...defaultConfig,
+	entry: {
+		index: './src/index.js',
+		'modal-booking': './src/modal-booking.js',
+		'bookings-frontend': './src/bookings-frontend.js',
+	},
 	plugins: [
 		...defaultConfig.plugins.filter(
 			( plugin ) =>
