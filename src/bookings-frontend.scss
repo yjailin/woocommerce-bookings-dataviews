@@ -86,7 +86,15 @@ fieldset.wc-bookings-date-picker {
  * WC's defaults — no theme tokens — until the unified controls
  * extension lands. */
 .cart .wc-bookings-booking-cost {
-	background: #eee;
+	/* Use the theme's `base` preset (background colour) instead of
+	 * WC's hardcoded `#eee`. The text colour comes from the cascade
+	 * (whatever the theme paints body text in), so by matching the
+	 * band's bg to the theme's base bg we guarantee text-on-bg
+	 * contrast on any theme — light or dark. `transparent` fallback
+	 * covers classic themes that don't expose the preset; on those
+	 * the page background shows through, which is also a contrast-
+	 * safe result. */
+	background: var( --wp--preset--color--base, transparent );
 	padding: 1em;
 	/* No `border-top` — WC's stock `1px solid #ddd` would render
 	 * right against the form container's themed bottom border (since
