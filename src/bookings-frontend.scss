@@ -85,16 +85,20 @@ fieldset.wc-bookings-date-picker {
  * padding) at the new selector chain. Kept intentionally close to
  * WC's defaults — no theme tokens — until the unified controls
  * extension lands. */
-.cart .wc-bookings-booking-cost {
-	/* Use the theme's `base` preset (background colour) instead of
-	 * WC's hardcoded `#eee`. The text colour comes from the cascade
-	 * (whatever the theme paints body text in), so by matching the
-	 * band's bg to the theme's base bg we guarantee text-on-bg
-	 * contrast on any theme — light or dark. `transparent` fallback
-	 * covers classic themes that don't expose the preset; on those
-	 * the page background shows through, which is also a contrast-
-	 * safe result. */
-	background: var( --wp--preset--color--base, transparent );
+/* Scoped to `form.cart >` (direct child) so this rule only fires on
+ * the STANDALONE product page where the cost band is a direct child
+ * of `<form class="cart">`. In modal mode the band lives inside
+ * `<form class="wc-bookings-modal__form">` (different parent, no
+ * `.cart` class) and gets its own styling from modal-booking.scss. */
+form.cart > .wc-bookings-booking-cost {
+	/* Use the current text colour at 20% alpha as the band's bg.
+	 * Matches the same `color-mix(currentColor, 20%)` we use for the
+	 * form container and date-picker fieldset borders, so the cost
+	 * band reads as part of the same colour system. Text on top of
+	 * the band stays at full opacity, giving ~80% contrast against
+	 * its own 20%-alpha background — readable on any theme, light
+	 * or dark. */
+	background: color-mix( in srgb, currentColor 20%, transparent );
 	padding: 1em;
 	/* No `border-top` — WC's stock `1px solid #ddd` would render
 	 * right against the form container's themed bottom border (since
