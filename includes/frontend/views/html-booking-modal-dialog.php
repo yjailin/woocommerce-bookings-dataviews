@@ -83,7 +83,7 @@ $product_id = is_callable( array( $product, 'get_id' ) ) ? $product->get_id() : 
 					class="wc-bookings-modal__checkout button alt disabled wp-element-button"
 					disabled
 				>
-					<?php esc_html_e( 'Proceed to Checkout', 'woocommerce-bookings' ); ?>
+					<?php esc_html_e( 'Go to checkout', 'woocommerce-bookings' ); ?>
 				</button>
 
 				<button

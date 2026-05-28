@@ -277,6 +277,10 @@ dialog.wc-bookings-modal.is-closing .wc-bookings-modal__panel,
 
 .wc-bookings-modal__footer .button {
 	margin: 0;
+	/* Pure 50/50 split — basis 0 so text length doesn't bias the
+	 * widths. Applied on every viewport (was mobile-only); the user
+	 * wants both buttons to share the row equally on desktop too. */
+	flex: 1 1 0;
 }
 
 /* Mobile: bottom sheet. Layout only — the slide-up itself is
@@ -297,11 +301,5 @@ dialog.wc-bookings-modal.is-closing .wc-bookings-modal__panel,
 		 * bottom-sheet pattern (iOS sheets, Material). Without this
 		 * the sheet reads as a slab. */
 		border-radius: 8px 8px 0 0;
-	}
-
-	.wc-bookings-modal__footer .button {
-		/* Pure 50/50 split — basis 0 so text length doesn't bias the
-		 * widths. */
-		flex: 1 1 0;
 	}
 }

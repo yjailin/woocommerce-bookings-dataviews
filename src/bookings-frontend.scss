@@ -85,12 +85,13 @@ fieldset.wc-bookings-date-picker {
  * padding) at the new selector chain. Kept intentionally close to
  * WC's defaults — no theme tokens — until the unified controls
  * extension lands. */
-/* Scoped to `form.cart >` (direct child) so this rule only fires on
- * the STANDALONE product page where the cost band is a direct child
- * of `<form class="cart">`. In modal mode the band lives inside
- * `<form class="wc-bookings-modal__form">` (different parent, no
- * `.cart` class) and gets its own styling from modal-booking.scss. */
-form.cart > .wc-bookings-booking-cost {
+/* Scoped to `form.cart:not(.wc-bookings-modal__form) >` so this rule
+ * only fires on the STANDALONE product page. The modal's `<form>`
+ * also carries the `.cart` class (so WC's submit / AJAX hooks keep
+ * working), so a naked `form.cart >` selector would match modal mode
+ * too — and the user wants the modal cost band to use the site
+ * background, not the text-coloured wash this rule paints. */
+form.cart:not( .wc-bookings-modal__form ) > .wc-bookings-booking-cost {
 	/* Use the current text colour at 20% alpha as the band's bg.
 	 * Matches the same `color-mix(currentColor, 20%)` we use for the
 	 * form container and date-picker fieldset borders, so the cost
